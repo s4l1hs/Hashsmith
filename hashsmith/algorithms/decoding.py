@@ -45,6 +45,32 @@ def decode_base85(text: str) -> str:
         raise ValueError("Invalid Base85 format provided")
 
 
+def decode_base64url(text: str) -> str:
+    try:
+        padding = "=" * ((4 - len(text) % 4) % 4)
+        return base64.urlsafe_b64decode((text + padding).encode("utf-8")).decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError):
+        raise ValueError("Invalid Base64URL format provided")
+
+
+def decode_base58(text: str) -> str:
+    alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+    num = 0
+    for ch in text:
+        if ch not in alphabet:
+            raise ValueError("Invalid Base58 format provided")
+        num = num * 58 + alphabet.index(ch)
+    # handle leading ones
+    pad = 0
+    for ch in text:
+        if ch == "1":
+            pad += 1
+        else:
+            break
+    data = num.to_bytes((num.bit_length() + 7) // 8, "big") if num > 0 else b""
+    return (b"\x00" * pad + data).decode("utf-8")
+
+
 def decode_decimal(text: str) -> str:
     parts = text.strip().split()
     try:
@@ -157,6 +183,125 @@ def decode_leet_speak(text: str) -> str:
 
 def decode_reverse(text: str) -> str:
     return text[::-1]
+
+
+def decode_brainfuck(code: str) -> str:
+    valid = set("+-<>[],.")
+    if any(ch not in valid for ch in code):
+        raise ValueError("Invalid Brainfuck format provided")
+
+    tape = [0]
+    ptr = 0
+    output = []
+    # Precompute bracket pairs
+    stack = []
+    pairs = {}
+    for i, ch in enumerate(code):
+        if ch == "[":
+            stack.append(i)
+        elif ch == "]":
+            if not stack:
+                raise ValueError("Invalid Brainfuck format provided")
+            j = stack.pop()
+            pairs[i] = j
+            pairs[j] = i
+    if stack:
+        raise ValueError("Invalid Brainfuck format provided")
+
+    i = 0
+    while i < len(code):
+        ch = code[i]
+        if ch == "+":
+            tape[ptr] = (tape[ptr] + 1) % 256
+        elif ch == "-":
+            tape[ptr] = (tape[ptr] - 1) % 256
+        elif ch == ">":
+            ptr += 1
+            if ptr == len(tape):
+                tape.append(0)
+        elif ch == "<":
+            ptr -= 1
+            if ptr < 0:
+                raise ValueError("Invalid Brainfuck format provided")
+        elif ch == ".":
+            output.append(chr(tape[ptr]))
+        elif ch == ",":
+            # no input stream; treat as zero
+            tape[ptr] = 0
+        elif ch == "[":
+            if tape[ptr] == 0:
+                i = pairs[i]
+        elif ch == "]":
+            if tape[ptr] != 0:
+                i = pairs[i]
+        i += 1
+
+    return "".join(output)
+
+
+def decode_rail_fence(text: str, rails: int) -> str:
+    if rails < 2:
+        raise ValueError("Rails must be >= 2")
+    length = len(text)
+    # Determine rail pattern
+    pattern = []
+    rail = 0
+    direction = 1
+    for _ in range(length):
+        pattern.append(rail)
+        rail += direction
+        if rail == 0 or rail == rails - 1:
+            direction *= -1
+    # Count characters per rail
+    counts = [pattern.count(r) for r in range(rails)]
+    rails_data = []
+    idx = 0
+    for count in counts:
+        rails_data.append(list(text[idx:idx + count]))
+        idx += count
+    # Reconstruct
+    result = []
+    rail_positions = [0] * rails
+    for r in pattern:
+        result.append(rails_data[r][rail_positions[r]])
+        rail_positions[r] += 1
+    return "".join(result)
+
+
+def decode_polybius(text: str) -> str:
+    alphabet = "ABCDEFGHIKLMNOPQRSTUVWXYZ"
+    tokens = text.strip().split()
+    result = []
+    for token in tokens:
+        if token == "/":
+            result.append(" ")
+            continue
+        if len(token) != 2 or not token.isdigit():
+            raise ValueError("Invalid Polybius format provided")
+        row = int(token[0]) - 1
+        col = int(token[1]) - 1
+        if row not in range(5) or col not in range(5):
+            raise ValueError("Invalid Polybius format provided")
+        result.append(alphabet[row * 5 + col])
+    return "".join(result)
+
+
+def decode_unicode_escaped(text: str) -> str:
+    if len(text) % 6 != 0:
+        raise ValueError("Invalid Unicode escaped format provided")
+    result = []
+    i = 0
+    while i < len(text):
+        chunk = text[i:i + 6]
+        if not chunk.startswith("\\u"):
+            raise ValueError("Invalid Unicode escaped format provided")
+        hex_part = chunk[2:]
+        try:
+            result.append(chr(int(hex_part, 16)))
+        except ValueError:
+            raise ValueError("Invalid Unicode escaped format provided")
+        i += 6
+    return "".join(result)
 
 
 def encode_caesar(text: str, shift: int) -> str:

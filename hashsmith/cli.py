@@ -10,6 +10,8 @@ from .algorithms.decoding import (
     decode_base64,
     decode_base32,
     decode_base85,
+    decode_base64url,
+    decode_base58,
     decode_binary,
     decode_caesar,
     decode_decimal,
@@ -24,11 +26,17 @@ from .algorithms.decoding import (
     decode_baconian,
     decode_leet_speak,
     decode_reverse,
+    decode_brainfuck,
+    decode_rail_fence,
+    decode_polybius,
+    decode_unicode_escaped,
 )
 from .algorithms.encoding import (
     encode_base64,
     encode_base32,
     encode_base85,
+    encode_base64url,
+    encode_base58,
     encode_binary,
     encode_caesar,
     encode_decimal,
@@ -43,6 +51,10 @@ from .algorithms.encoding import (
     encode_baconian,
     encode_leet_speak,
     encode_reverse,
+    encode_brainfuck,
+    encode_rail_fence,
+    encode_polybius,
+    encode_unicode_escaped,
 )
 from .algorithms.hashing import hash_text
 from .utils.banner import render_banner
@@ -74,26 +86,28 @@ def build_parser() -> argparse.ArgumentParser:
 
     encode_parser = subparsers.add_parser("encode", help="Encode text")
     encode_parser.add_argument("--type", required=True, choices=[
-        "base64", "base32", "base85", "hex", "binary", "decimal", "octal",
+        "base64", "base64url", "base32", "base85", "base58", "hex", "binary", "decimal", "octal",
         "morse", "url", "caesar", "rot13", "vigenere", "xor", "atbash",
-        "baconian", "leet", "reverse"
+           "baconian", "leet", "reverse", "brainf*ck", "railfence", "polybius", "unicode"
     ])
     encode_parser.add_argument("--text", help="Text input")
     encode_parser.add_argument("--file", help="Read input from file")
     encode_parser.add_argument("--shift", type=int, default=3, help="Shift for Caesar")
     encode_parser.add_argument("--key", help="Key for Vigenere/XOR")
+    encode_parser.add_argument("--rails", type=int, default=2, help="Rails for Rail Fence")
     encode_parser.add_argument("--out", help="Write output to file")
 
     decode_parser = subparsers.add_parser("decode", help="Decode text")
     decode_parser.add_argument("--type", required=True, choices=[
-        "base64", "base32", "base85", "hex", "binary", "decimal", "octal",
+        "base64", "base64url", "base32", "base85", "base58", "hex", "binary", "decimal", "octal",
         "morse", "url", "caesar", "rot13", "vigenere", "xor", "atbash",
-        "baconian", "leet", "reverse"
+           "baconian", "leet", "reverse", "brainf*ck", "railfence", "polybius", "unicode"
     ])
     decode_parser.add_argument("--text", help="Text input")
     decode_parser.add_argument("--file", help="Read input from file")
     decode_parser.add_argument("--shift", type=int, default=3, help="Shift for Caesar")
     decode_parser.add_argument("--key", help="Key for Vigenere/XOR")
+    decode_parser.add_argument("--rails", type=int, default=2, help="Rails for Rail Fence")
     decode_parser.add_argument("--out", help="Write output to file")
 
     hash_parser = subparsers.add_parser("hash", help="Hash text")
@@ -128,12 +142,18 @@ def handle_encode(args: argparse.Namespace, console: Console) -> str:
     text = resolve_input(args.text, args.file)
     if args.type in {"vigenere", "xor"} and not args.key:
         raise ValueError("This algorithm requires --key")
+    if args.type == "railfence" and args.rails < 2:
+        raise ValueError("Rails must be >= 2")
     if args.type == "base64":
         return encode_base64(text)
+    if args.type == "base64url":
+        return encode_base64url(text)
     if args.type == "base32":
         return encode_base32(text)
     if args.type == "base85":
         return encode_base85(text)
+    if args.type == "base58":
+        return encode_base58(text)
     if args.type == "hex":
         return encode_hex(text)
     if args.type == "binary":
@@ -162,6 +182,14 @@ def handle_encode(args: argparse.Namespace, console: Console) -> str:
         return encode_leet_speak(text)
     if args.type == "reverse":
         return encode_reverse(text)
+    if args.type == "brainf*ck":
+           return encode_brainfuck(text)
+    if args.type == "railfence":
+        return encode_rail_fence(text, args.rails)
+    if args.type == "polybius":
+        return encode_polybius(text)
+    if args.type == "unicode":
+        return encode_unicode_escaped(text)
     raise ValueError("Unsupported encode type")
 
 
@@ -169,12 +197,18 @@ def handle_decode(args: argparse.Namespace, console: Console) -> str:
     text = resolve_input(args.text, args.file)
     if args.type in {"vigenere", "xor"} and not args.key:
         raise ValueError("This algorithm requires --key")
+    if args.type == "railfence" and args.rails < 2:
+        raise ValueError("Rails must be >= 2")
     if args.type == "base64":
         return decode_base64(text)
+    if args.type == "base64url":
+        return decode_base64url(text)
     if args.type == "base32":
         return decode_base32(text)
     if args.type == "base85":
         return decode_base85(text)
+    if args.type == "base58":
+        return decode_base58(text)
     if args.type == "hex":
         return decode_hex(text)
     if args.type == "binary":
@@ -203,6 +237,14 @@ def handle_decode(args: argparse.Namespace, console: Console) -> str:
         return decode_leet_speak(text)
     if args.type == "reverse":
         return decode_reverse(text)
+    if args.type == "brainf*ck":
+           return decode_brainfuck(text)
+    if args.type == "railfence":
+        return decode_rail_fence(text, args.rails)
+    if args.type == "polybius":
+        return decode_polybius(text)
+    if args.type == "unicode":
+        return decode_unicode_escaped(text)
     raise ValueError("Unsupported decode type")
 
 
@@ -296,10 +338,14 @@ def interactive_mode(console: Console, accent: str) -> None:
         attempts = 0
         while attempts < 3:
             console.print(f"\n{label}:")
-            console.print(f"  [{accent}]0[/{accent}]) Back")
+            def format_option(key: str, text: str) -> str:
+                spacer = "  " if len(key) == 1 else " "
+                return f"  [{accent}]{key}[/{accent}]){spacer}{text}"
+
+            console.print(format_option("0", "Back"))
             for idx, option in enumerate(options, start=1):
-                console.print(f"  [{accent}]{idx}[/{accent}]) {option}")
-            console.print(f"  [{accent}]q[/{accent}]) Quit")
+                console.print(format_option(str(idx), option))
+            console.print(format_option("q", "Quit"))
             raw = ask_text("Select option", default=str(default_index)).strip().lower()
             if raw == "0":
                 raise BackAction()
@@ -372,17 +418,20 @@ def interactive_mode(console: Console, accent: str) -> None:
 
                 if action == "encode":
                     enc_options = [
-                        "base64", "base32", "base85", "hex", "binary", "decimal", "octal",
+                        "base64", "base64url", "base32", "base85", "base58", "hex", "binary", "decimal", "octal",
                         "morse", "url", "caesar", "rot13", "vigenere", "xor", "atbash",
-                        "baconian", "leet", "reverse",
+                        "baconian", "leet", "reverse", "brainf*ck", "railfence", "polybius", "unicode",
                     ]
                     enc_type = choose_option("Encoding type", enc_options, default_index=1)
                     shift = ask_int("Caesar shift", default=3) if enc_type == "caesar" else 3
                     text, file_path = _get_interactive_input("Input source")
                     key = None
+                    rails = 2
                     if enc_type in {"vigenere", "xor"}:
                         key = ask_text("Key")
-                    args = argparse.Namespace(type=enc_type, text=text or None, file=file_path, shift=shift, key=key)
+                    if enc_type == "railfence":
+                        rails = ask_int("Rails", default=2)
+                    args = argparse.Namespace(type=enc_type, text=text or None, file=file_path, shift=shift, key=key, rails=rails)
                     try:
                         result = handle_encode(args, console)
                         output_result(result, out_path, console)
@@ -393,17 +442,20 @@ def interactive_mode(console: Console, accent: str) -> None:
 
                 if action == "decode":
                     dec_options = [
-                        "base64", "base32", "base85", "hex", "binary", "decimal", "octal",
+                        "base64", "base64url", "base32", "base85", "base58", "hex", "binary", "decimal", "octal",
                         "morse", "url", "caesar", "rot13", "vigenere", "xor", "atbash",
-                        "baconian", "leet", "reverse",
+                        "baconian", "leet", "reverse", "brainf*ck", "railfence", "polybius", "unicode",
                     ]
                     dec_type = choose_option("Decoding type", dec_options, default_index=1)
                     shift = ask_int("Caesar shift", default=3) if dec_type == "caesar" else 3
                     text, file_path = _get_interactive_input("Input source")
                     key = None
+                    rails = 2
                     if dec_type in {"vigenere", "xor"}:
                         key = ask_text("Key")
-                    args = argparse.Namespace(type=dec_type, text=text or None, file=file_path, shift=shift, key=key)
+                    if dec_type == "railfence":
+                        rails = ask_int("Rails", default=2)
+                    args = argparse.Namespace(type=dec_type, text=text or None, file=file_path, shift=shift, key=key, rails=rails)
                     try:
                         result = handle_decode(args, console)
                         output_result(result, out_path, console)

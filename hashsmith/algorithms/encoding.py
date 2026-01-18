@@ -29,12 +29,84 @@ def encode_base85(text: str) -> str:
     return base64.a85encode(text.encode("utf-8")).decode("utf-8")
 
 
+def encode_base64url(text: str) -> str:
+    return base64.urlsafe_b64encode(text.encode("utf-8")).decode("utf-8").rstrip("=")
+
+
+def encode_base58(text: str) -> str:
+    alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+    data = text.encode("utf-8")
+    num = int.from_bytes(data, "big")
+    enc = []
+    while num > 0:
+        num, rem = divmod(num, 58)
+        enc.append(alphabet[rem])
+    # handle leading zeros
+    pad = 0
+    for b in data:
+        if b == 0:
+            pad += 1
+        else:
+            break
+    return "1" * pad + "".join(reversed(enc or [alphabet[0]]))
+
+
 def encode_decimal(text: str) -> str:
     return " ".join(str(byte) for byte in text.encode("utf-8"))
 
 
 def encode_octal(text: str) -> str:
     return " ".join(format(byte, "o") for byte in text.encode("utf-8"))
+
+
+def encode_brainfuck(text: str) -> str:
+    # Simple encoder: adjust current cell with +/- and output with .
+    current = 0
+    output = []
+    for ch in text:
+        target = ord(ch)
+        delta = target - current
+        if delta > 0:
+            output.append("+" * delta)
+        elif delta < 0:
+            output.append("-" * (-delta))
+        output.append(".")
+        current = target
+    return "".join(output)
+
+
+def encode_rail_fence(text: str, rails: int) -> str:
+    if rails < 2:
+        raise ValueError("Rails must be >= 2")
+    fence = ["" for _ in range(rails)]
+    rail = 0
+    direction = 1
+    for ch in text:
+        fence[rail] += ch
+        rail += direction
+        if rail == 0 or rail == rails - 1:
+            direction *= -1
+    return "".join(fence)
+
+
+def encode_polybius(text: str) -> str:
+    alphabet = "ABCDEFGHIKLMNOPQRSTUVWXYZ"  # I/J combined
+    pairs = []
+    for ch in text.upper():
+        if ch == "J":
+            ch = "I"
+        if ch in alphabet:
+            idx = alphabet.index(ch)
+            row = idx // 5 + 1
+            col = idx % 5 + 1
+            pairs.append(f"{row}{col}")
+        elif ch == " ":
+            pairs.append("/")
+    return " ".join(pairs)
+
+
+def encode_unicode_escaped(text: str) -> str:
+    return "".join(f"\\u{ord(ch):04x}" for ch in text)
 
 
 def encode_caesar(text: str, shift: int) -> str:
