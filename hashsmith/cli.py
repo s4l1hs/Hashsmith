@@ -306,9 +306,13 @@ def interactive_mode(console: Console, accent: str) -> None:
                     shift = ask_int("Caesar shift", default=3) if enc_type == "caesar" else 3
                     text, file_path = _get_interactive_input("Input source")
                     args = argparse.Namespace(type=enc_type, text=text or None, file=file_path, shift=shift)
-                    result = handle_encode(args, console)
-                    output_result(result, out_path, console)
-                    return
+                    try:
+                        result = handle_encode(args, console)
+                        output_result(result, out_path, console)
+                        return
+                    except ValueError as exc:
+                        console.print(f"[bold red]Error:[/bold red] {exc}")
+                        continue
 
                 if action == "decode":
                     dec_options = ["base64", "hex", "binary", "morse", "url", "caesar", "rot13"]
@@ -316,9 +320,13 @@ def interactive_mode(console: Console, accent: str) -> None:
                     shift = ask_int("Caesar shift", default=3) if dec_type == "caesar" else 3
                     text, file_path = _get_interactive_input("Input source")
                     args = argparse.Namespace(type=dec_type, text=text or None, file=file_path, shift=shift)
-                    result = handle_decode(args, console)
-                    output_result(result, out_path, console)
-                    return
+                    try:
+                        result = handle_decode(args, console)
+                        output_result(result, out_path, console)
+                        return
+                    except ValueError as exc:
+                        console.print(f"[bold red]Error:[/bold red] {exc}")
+                        continue
 
                 hash_options = ["md5", "sha1", "sha256", "sha512"]
                 hash_type = choose_option("Hash type", hash_options, default_index=3)
@@ -328,9 +336,13 @@ def interactive_mode(console: Console, accent: str) -> None:
                     salt = ask_text("Salt value")
                 salt_mode = choose_option("Salt mode", ["prefix", "suffix"], default_index=1) if salt else "prefix"
                 args = argparse.Namespace(type=hash_type, text=text or None, file=file_path, salt=salt, salt_mode=salt_mode)
-                result = handle_hash(args)
-                output_result(result, out_path, console)
-                return
+                try:
+                    result = handle_hash(args, console)
+                    output_result(result, out_path, console)
+                    return
+                except ValueError as exc:
+                    console.print(f"[bold red]Error:[/bold red] {exc}")
+                    continue
 
             crack_type = choose_option("Hash type", ["md5", "sha1", "sha256", "sha512"], default_index=1)
             mode = choose_option("Mode", ["dict", "brute"], default_index=1)
