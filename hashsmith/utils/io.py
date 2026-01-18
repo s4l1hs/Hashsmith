@@ -9,6 +9,7 @@ def read_text_from_file(path: str) -> str:
 
 def write_text_to_file(path: str, content: str) -> None:
     file_path = Path(path).expanduser().resolve()
+    file_path.parent.mkdir(parents=True, exist_ok=True)
     file_path.write_text(content, encoding="utf-8")
 
 

@@ -12,9 +12,9 @@ ASCII_ART = r"""
 """
 
 
-def render_banner(console: Console) -> None:
-    title = Text("Hashsmith", style="bold cyan")
+def render_banner(console: Console, accent: str = "cyan") -> None:
+    title = Text("Hashsmith", style=f"bold {accent}")
     subtitle = Text("Modular CLI for encoding, decoding, hashing, cracking", style="dim")
-    art = Text(ASCII_ART, style="green")
+    art = Text(ASCII_ART, style=f"{accent}")
     content = Text.assemble(art, "\n", title, "\n", subtitle)
-    console.print(Panel(content, border_style="cyan"))
+    console.print(Panel(content, border_style=accent))

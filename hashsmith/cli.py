@@ -2,7 +2,7 @@ import argparse
 from typing import Optional
 
 from rich.console import Console
-from rich.prompt import Confirm, IntPrompt, Prompt
+from rich.prompt import IntPrompt, Prompt
 from rich.text import Text
 
 from .algorithms.cracking import brute_force, dictionary_attack, format_rate
@@ -30,12 +30,24 @@ from .utils.io import resolve_input, write_text_to_file
 from .utils.wordlist import iter_wordlist
 
 
+THEMES = {
+    "cyan": "cyan",
+    "green": "green",
+    "magenta": "magenta",
+    "blue": "blue",
+    "yellow": "yellow",
+    "red": "red",
+    "white": "white",
+}
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="hashsmith",
         description="Hashsmith CLI for encoding, decoding, hashing, and cracking.",
     )
     parser.add_argument("--no-banner", action="store_true", help="Disable banner")
+    parser.add_argument("--theme", choices=list(THEMES.keys()), default="cyan", help="Accent color")
 
     subparsers = parser.add_subparsers(dest="command")
 
@@ -128,7 +140,7 @@ def handle_hash(args: argparse.Namespace) -> str:
     return hash_text(text, args.type, args.salt, args.salt_mode)
 
 
-def handle_crack(args: argparse.Namespace, console: Console) -> int:
+def handle_crack(args: argparse.Namespace, console: Console, accent: str = "cyan") -> int:
     if args.mode == "dict":
         if not args.wordlist:
             console.print("[red]--wordlist is required for dict mode[/red]")
@@ -159,7 +171,7 @@ def handle_crack(args: argparse.Namespace, console: Console) -> int:
     console.print(
         Text(
             f"Attempts: {result.attempts} | Elapsed: {result.elapsed:.2f}s | Rate: {format_rate(result.rate)}",
-            style="cyan",
+            style=accent,
         )
     )
     return 0
@@ -173,35 +185,59 @@ def output_result(result: str, out: Optional[str], console: Console) -> None:
         console.print(result)
 
 
-def interactive_mode(console: Console) -> None:
-    console.print("[bold cyan]Interactive mode[/bold cyan]")
+def interactive_mode(console: Console, accent: str) -> None:
+    console.print(f"[bold {accent}]Interactive mode[/bold {accent}]")
     def choose_option(label: str, options: list[str], default_index: int = 1) -> str:
         console.print(f"\n{label}:")
         for idx, option in enumerate(options, start=1):
-            console.print(f"  [cyan]{idx}[/cyan]) {option}")
+            console.print(f"  [{accent}]{idx}[/{accent}]) {option}")
         choice = IntPrompt.ask("Select option", default=default_index)
         if choice < 1 or choice > len(options):
             console.print("[red]Invalid selection[/red]")
             raise SystemExit(2)
         return options[choice - 1]
 
-    actions = ["encode", "decode", "hash", "crack"]
-    action = choose_option("Choose action", actions, default_index=1)
+    def ask_yes_no(label: str, default: bool = False) -> bool:
+        default_str = "y" if default else "n"
+        value = Prompt.ask(f"{label} (y/n)", default=default_str)
+        normalized = value.strip().lower()
+        if normalized in {"y", "yes"}:
+            return True
+        if normalized in {"n", "no"}:
+            return False
+        console.print("[red]Invalid input. Use y/n.[/red]")
+        raise SystemExit(2)
+
+    actions = ["encode", "decode", "hash", "crack", "set-theme"]
+    while True:
+        action = choose_option("Choose action", actions, default_index=1)
+
+        if action == "set-theme":
+            theme_keys = list(THEMES.keys())
+            selected = choose_option("Select theme", theme_keys, default_index=1)
+            accent = THEMES.get(selected, "cyan")
+            render_banner(console, accent)
+            console.print(f"Theme set to [bold {accent}]{selected}[/bold {accent}]")
+            continue
+        break
 
     if action in {"encode", "decode", "hash"}:
-        text = Prompt.ask("Text (leave empty to use file)", default="")
-        file_path = None
-        if not text:
-            file_path = Prompt.ask("File path")
-
         out_path = None
-        if Confirm.ask("Save output to file?", default=False):
-            out_path = Prompt.ask("Output file path")
+        if ask_yes_no("Save output to file?", default=False):
+            out_choice = choose_option("Output path", ["use default output.txt", "enter custom path"], default_index=1)
+            out_path = "output.txt" if out_choice.startswith("use default") else Prompt.ask("Output file path")
 
         if action == "encode":
             enc_options = ["base64", "hex", "binary", "morse", "url", "caesar", "rot13"]
             enc_type = choose_option("Encoding type", enc_options, default_index=1)
             shift = IntPrompt.ask("Caesar shift", default=3) if enc_type == "caesar" else 3
+            input_mode = choose_option("Input source", ["use sample text", "enter custom text", "use file"], default_index=1)
+            text = "hello" if input_mode == "use sample text" else None
+            file_path = None
+            if input_mode == "enter custom text":
+                text = Prompt.ask("Enter text")
+            elif input_mode == "use file":
+                file_path = Prompt.ask("File path")
             args = argparse.Namespace(type=enc_type, text=text or None, file=file_path, shift=shift)
             result = handle_encode(args, console)
             output_result(result, out_path, console)
@@ -211,6 +247,22 @@ def interactive_mode(console: Console) -> None:
             dec_options = ["base64", "hex", "binary", "morse", "url", "caesar", "rot13"]
             dec_type = choose_option("Decoding type", dec_options, default_index=1)
             shift = IntPrompt.ask("Caesar shift", default=3) if dec_type == "caesar" else 3
+            sample_map = {
+                "base64": "aGVsbG8=",
+                "hex": "68656c6c6f",
+                "binary": "01101000 01100101 01101100 01101100 01101111",
+                "morse": ".... . .-.. .-.. ---",
+                "url": "hello%20world",
+                "caesar": "khoor",
+                "rot13": "uryyb",
+            }
+            input_mode = choose_option("Input source", ["use sample", "enter custom", "use file"], default_index=1)
+            text = sample_map.get(dec_type, "") if input_mode == "use sample" else None
+            file_path = None
+            if input_mode == "enter custom":
+                text = Prompt.ask("Enter encoded text")
+            elif input_mode == "use file":
+                file_path = Prompt.ask("File path")
             args = argparse.Namespace(type=dec_type, text=text or None, file=file_path, shift=shift)
             result = handle_decode(args, console)
             output_result(result, out_path, console)
@@ -218,21 +270,40 @@ def interactive_mode(console: Console) -> None:
 
         hash_options = ["md5", "sha1", "sha256", "sha512"]
         hash_type = choose_option("Hash type", hash_options, default_index=3)
-        salt = Prompt.ask("Salt (optional)", default="")
-        salt_mode = choose_option("Salt mode", ["prefix", "suffix"], default_index=1)
+        input_mode = choose_option("Input source", ["use sample text", "enter custom text", "use file"], default_index=1)
+        text = "hello" if input_mode == "use sample text" else None
+        file_path = None
+        if input_mode == "enter custom text":
+            text = Prompt.ask("Enter text")
+        elif input_mode == "use file":
+            file_path = Prompt.ask("File path")
+        salt = ""
+        if ask_yes_no("Use salt?", default=False):
+            salt = Prompt.ask("Salt value")
+        salt_mode = choose_option("Salt mode", ["prefix", "suffix"], default_index=1) if salt else "prefix"
         args = argparse.Namespace(type=hash_type, text=text or None, file=file_path, salt=salt, salt_mode=salt_mode)
         result = handle_hash(args)
         output_result(result, out_path, console)
         return
 
     crack_type = choose_option("Hash type", ["md5", "sha1", "sha256", "sha512"], default_index=1)
-    target_hash = Prompt.ask("Target hash")
     mode = choose_option("Mode", ["dict", "brute"], default_index=1)
-    salt = Prompt.ask("Salt (optional)", default="")
-    salt_mode = choose_option("Salt mode", ["prefix", "suffix"], default_index=1)
+    sample_word = "password" if mode == "dict" else "ab"
+    sample_hash = hash_text(sample_word, crack_type)
+    target_choice = choose_option(
+        "Target hash",
+        [f"use sample ({sample_word})", "enter custom"],
+        default_index=1,
+    )
+    target_hash = sample_hash if target_choice.startswith("use sample") else Prompt.ask("Target hash")
+    salt = ""
+    if ask_yes_no("Use salt?", default=False):
+        salt = Prompt.ask("Salt value")
+    salt_mode = choose_option("Salt mode", ["prefix", "suffix"], default_index=1) if salt else "prefix"
 
     if mode == "dict":
-        wordlist = Prompt.ask("Wordlist path", default="wordlists/common.txt")
+        wordlist_choice = choose_option("Wordlist", ["use default wordlists/common.txt", "enter custom path"], default_index=1)
+        wordlist = "wordlists/common.txt" if wordlist_choice.startswith("use default") else Prompt.ask("Wordlist path")
         args = argparse.Namespace(
             type=crack_type,
             target_hash=target_hash,
@@ -244,9 +315,10 @@ def interactive_mode(console: Console) -> None:
             salt=salt,
             salt_mode=salt_mode,
         )
-        raise SystemExit(handle_crack(args, console))
+        raise SystemExit(handle_crack(args, console, accent))
 
-    charset = Prompt.ask("Charset", default="abcdefghijklmnopqrstuvwxyz0123456789")
+    charset_choice = choose_option("Charset", ["use default [a-z0-9]", "enter custom"], default_index=1)
+    charset = "abcdefghijklmnopqrstuvwxyz0123456789" if charset_choice.startswith("use default") else Prompt.ask("Charset")
     min_len = IntPrompt.ask("Min length", default=1)
     max_len = IntPrompt.ask("Max length", default=4)
     args = argparse.Namespace(
@@ -260,7 +332,7 @@ def interactive_mode(console: Console) -> None:
         salt=salt,
         salt_mode=salt_mode,
     )
-    raise SystemExit(handle_crack(args, console))
+    raise SystemExit(handle_crack(args, console, accent))
 
 
 def main() -> None:
@@ -268,23 +340,34 @@ def main() -> None:
     args = parser.parse_args()
     console = Console()
 
-    if not args.no_banner:
-        render_banner(console)
+    accent = THEMES.get(args.theme, "cyan")
 
     if args.command is None:
-        interactive_mode(console)
+        if not args.no_banner:
+            render_banner(console, accent)
+        interactive_mode(console, accent)
     elif args.command == "interactive":
-        interactive_mode(console)
+        if not args.no_banner:
+            render_banner(console, accent)
+        interactive_mode(console, accent)
     elif args.command == "encode":
+        if not args.no_banner:
+            render_banner(console, accent)
         result = handle_encode(args, console)
         output_result(result, args.out, console)
     elif args.command == "decode":
+        if not args.no_banner:
+            render_banner(console, accent)
         result = handle_decode(args, console)
         output_result(result, args.out, console)
     elif args.command == "hash":
+        if not args.no_banner:
+            render_banner(console, accent)
         result = handle_hash(args)
         output_result(result, args.out, console)
     elif args.command == "crack":
-        raise SystemExit(handle_crack(args, console))
+        if not args.no_banner:
+            render_banner(console, accent)
+        raise SystemExit(handle_crack(args, console, accent))
     else:
         parser.print_help()
