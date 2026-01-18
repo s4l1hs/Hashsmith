@@ -1,0 +1,2 @@
+[console_scripts]
+hashsmith = hashsmith.cli:main
