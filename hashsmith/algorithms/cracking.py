@@ -3,7 +3,7 @@ import string
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import Iterable, Optional, Tuple, List
+from typing import Iterable, Optional, Tuple, List, Callable
 
 try:
     import bcrypt  # type: ignore
@@ -45,6 +45,7 @@ def dictionary_attack(
     salt: str = "",
     salt_mode: str = "prefix",
     workers: int = 1,
+    progress_callback: Optional[Callable[[int], None]] = None,
 ) -> CrackResult:
     start = time.perf_counter()
     counter = RateCounter()
@@ -68,6 +69,8 @@ def dictionary_attack(
             for future in as_completed(futures):
                 found, count = future.result()
                 attempts += count
+                if progress_callback:
+                    progress_callback(count)
                 if found:
                     elapsed = time.perf_counter() - start
                     rate = counter.rate(attempts)
@@ -75,6 +78,8 @@ def dictionary_attack(
     else:
         for word in words:
             attempts += 1
+            if progress_callback:
+                progress_callback(1)
             if algorithm == "bcrypt":
                 if bcrypt.checkpw(word.encode("utf-8"), target_hash.encode("utf-8")):
                     elapsed = time.perf_counter() - start
@@ -101,6 +106,7 @@ def brute_force(
     max_len: int = 4,
     salt: str = "",
     salt_mode: str = "prefix",
+    progress_callback: Optional[Callable[[int], None]] = None,
 ) -> CrackResult:
     start = time.perf_counter()
     counter = RateCounter()
@@ -109,6 +115,8 @@ def brute_force(
     for length in range(min_len, max_len + 1):
         for combo in itertools.product(charset, repeat=length):
             attempts += 1
+            if progress_callback:
+                progress_callback(1)
             candidate = "".join(combo)
             if algorithm == "bcrypt":
                 if bcrypt is None:

@@ -1,9 +1,20 @@
 import argparse
 import os
+import time
 from typing import Optional
 
 from rich.console import Console
 from rich.prompt import IntPrompt, Prompt
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
 from rich.text import Text
 
 from .algorithms.cracking import brute_force, dictionary_attack, format_rate
@@ -265,31 +276,127 @@ def is_hex_string(value: str) -> bool:
     return all(ch in "0123456789abcdefABCDEF" for ch in value)
 
 
+def count_wordlist_entries(path: str) -> Optional[int]:
+    try:
+        count = 0
+        with Path(path).expanduser().resolve().open("r", encoding="utf-8", errors="ignore") as handle:
+            for line in handle:
+                if line.strip():
+                    count += 1
+        return count
+    except Exception:
+        return None
+
+
 def handle_crack(args: argparse.Namespace, console: Console, accent: str = "cyan") -> int:
+    def build_progress() -> Progress:
+        return Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(bar_width=None),
+            TaskProgressColumn(),
+            MofNCompleteColumn(),
+            TextColumn("[bold cyan]•"),
+            TimeRemainingColumn(),
+            TextColumn("[bold cyan]•"),
+            TextColumn("[green]{task.fields[speed]} H/s"),
+            console=console,
+        )
+
     if args.mode == "dict":
         if args.workers < 1:
             args.workers = os.cpu_count() or 1
+        if args.type == "bcrypt" and args.workers > 1:
+            console.print("[yellow]bcrypt is CPU-expensive; multi-processing may not scale well.[/yellow]")
         if not args.wordlist:
             console.print("[red]--wordlist is required for dict mode[/red]")
             return 2
-        result = dictionary_attack(
-            args.target_hash,
-            args.type,
-            iter_wordlist(args.wordlist),
-            args.salt,
-            args.salt_mode,
-            workers=args.workers,
-        )
+        total = count_wordlist_entries(args.wordlist)
+        progress = build_progress()
+        task_id = progress.add_task("Cracking", total=total, speed="0")
+
+        attempts = 0
+        last_render = 0
+        update_every = 1000
+        start = time.perf_counter()
+
+        def progress_callback(delta: int) -> None:
+            nonlocal attempts, last_render
+            attempts += delta
+            if attempts - last_render < update_every:
+                return
+            elapsed = max(time.perf_counter() - start, 1e-6)
+            speed = f"{attempts / elapsed:,.2f}"
+            progress.update(task_id, advance=attempts - last_render, speed=speed)
+            last_render = attempts
+
+        try:
+            with progress:
+                try:
+                    result = dictionary_attack(
+                        args.target_hash,
+                        args.type,
+                        iter_wordlist(args.wordlist),
+                        args.salt,
+                        args.salt_mode,
+                        workers=args.workers,
+                        progress_callback=progress_callback,
+                    )
+                finally:
+                    elapsed = max(time.perf_counter() - start, 1e-6)
+                    speed = f"{attempts / elapsed:,.2f}"
+                    if total is not None:
+                        progress.update(task_id, completed=total, speed=speed)
+                    else:
+                        progress.update(task_id, advance=max(attempts - last_render, 0), speed=speed)
+                    progress.refresh()
+        except KeyboardInterrupt:
+            progress.stop()
+            raise
     else:
-        result = brute_force(
-            args.target_hash,
-            args.type,
-            charset=args.charset,
-            min_len=args.min_len,
-            max_len=args.max_len,
-            salt=args.salt,
-            salt_mode=args.salt_mode,
-        )
+        total = 0
+        charset_len = len(args.charset)
+        for length in range(args.min_len, args.max_len + 1):
+            total += charset_len ** length
+        progress = build_progress()
+        task_id = progress.add_task("Cracking", total=total, speed="0")
+
+        attempts = 0
+        last_render = 0
+        update_every = 1000
+        start = time.perf_counter()
+
+        def progress_callback(delta: int) -> None:
+            nonlocal attempts, last_render
+            attempts += delta
+            if attempts - last_render < update_every:
+                return
+            elapsed = max(time.perf_counter() - start, 1e-6)
+            speed = f"{attempts / elapsed:,.2f}"
+            progress.update(task_id, advance=attempts - last_render, speed=speed)
+            last_render = attempts
+
+        try:
+            with progress:
+                try:
+                    result = brute_force(
+                        args.target_hash,
+                        args.type,
+                        charset=args.charset,
+                        min_len=args.min_len,
+                        max_len=args.max_len,
+                        salt=args.salt,
+                        salt_mode=args.salt_mode,
+                        progress_callback=progress_callback,
+                    )
+                finally:
+                    elapsed = max(time.perf_counter() - start, 1e-6)
+                    speed = f"{attempts / elapsed:,.2f}"
+                    progress.update(task_id, completed=total, speed=speed)
+                    progress.refresh()
+        except KeyboardInterrupt:
+            progress.stop()
+            raise
 
     if result.found:
         console.print(f"[green]Found:[/green] {result.password}")

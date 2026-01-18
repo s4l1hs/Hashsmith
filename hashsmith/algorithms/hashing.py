@@ -136,7 +136,6 @@ def hash_text(text: str, algorithm: str, salt: str = "", salt_mode: str = "prefi
         else:
             salt_bytes = salt.encode("utf-8")
         return bcrypt.hashpw(text.encode("utf-8"), salt_bytes).decode("utf-8")
-
     h = HASH_FUNCS[algo]()
     h.update(text.encode("utf-8"))
     return h.hexdigest()
