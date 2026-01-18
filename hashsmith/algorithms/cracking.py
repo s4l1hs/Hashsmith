@@ -51,6 +51,18 @@ def _dictionary_worker(words: List[str], target_hash: str, algorithm: str, salt:
     mssql_salt = None
     if algorithm in {"mssql2005", "mssql2012"}:
         mssql_salt = _parse_mssql_2005_salt(target_hash)
+    hasher = None
+    verify_mismatch = None
+    invalid_hash = None
+    if algorithm == "argon2":
+        try:
+            from argon2 import PasswordHasher  # type: ignore
+            from argon2.exceptions import VerifyMismatchError, InvalidHash  # type: ignore
+        except Exception:  # pragma: no cover
+            return None, attempts
+        hasher = PasswordHasher()
+        verify_mismatch = VerifyMismatchError
+        invalid_hash = InvalidHash
     for word in words:
         attempts += 1
         if algorithm == "bcrypt":
@@ -60,11 +72,12 @@ def _dictionary_worker(words: List[str], target_hash: str, algorithm: str, salt:
                 return word, attempts
         elif algorithm == "argon2":
             try:
-                from argon2.low_level import Type, verify_secret  # type: ignore
-            except Exception:  # pragma: no cover
-                continue
-            if verify_secret(target_hash.encode("utf-8"), word.encode("utf-8"), type=Type.ID):
+                hasher.verify(target_hash, word)
                 return word, attempts
+            except (verify_mismatch, invalid_hash):
+                continue
+            except Exception:
+                continue
         elif algorithm == "scrypt":
             n, r, p, salt_bytes, digest = scrypt_params
             candidate = hashlib.scrypt(word.encode("utf-8"), salt=salt_bytes, n=n, r=r, p=p, dklen=len(digest))
@@ -97,10 +110,11 @@ def dictionary_attack(
         raise ValueError("bcrypt library is required for bcrypt cracking")
     if algorithm == "argon2":
         try:
-            from argon2.low_level import Type, verify_secret  # type: ignore
+            from argon2 import PasswordHasher  # type: ignore
+            from argon2.exceptions import VerifyMismatchError, InvalidHash  # type: ignore
         except Exception as exc:  # pragma: no cover
             raise ValueError("argon2-cffi library is required for argon2 cracking") from exc
-        argon2_verify = (Type, verify_secret)
+        argon2_verify = (PasswordHasher(), VerifyMismatchError, InvalidHash)
     else:
         argon2_verify = None
 
@@ -142,11 +156,14 @@ def dictionary_attack(
                     rate = counter.rate(attempts)
                     return CrackResult(True, word, attempts, elapsed, rate)
             elif algorithm == "argon2":
-                Type, verify_secret = argon2_verify
-                if verify_secret(target_hash.encode("utf-8"), word.encode("utf-8"), type=Type.ID):
+                hasher, verify_mismatch, invalid_hash = argon2_verify
+                try:
+                    hasher.verify(target_hash, word)
                     elapsed = time.perf_counter() - start
                     rate = counter.rate(attempts)
                     return CrackResult(True, word, attempts, elapsed, rate)
+                except (verify_mismatch, invalid_hash):
+                    pass
             elif algorithm == "scrypt":
                 n, r, p, salt_bytes, digest = scrypt_params
                 candidate = hashlib.scrypt(word.encode("utf-8"), salt=salt_bytes, n=n, r=r, p=p, dklen=len(digest))
@@ -188,10 +205,11 @@ def brute_force(
     attempts = 0
     if algorithm == "argon2":
         try:
-            from argon2.low_level import Type, verify_secret  # type: ignore
+            from argon2 import PasswordHasher  # type: ignore
+            from argon2.exceptions import VerifyMismatchError, InvalidHash  # type: ignore
         except Exception as exc:  # pragma: no cover
             raise ValueError("argon2-cffi library is required for argon2 cracking") from exc
-        argon2_verify = (Type, verify_secret)
+        argon2_verify = (PasswordHasher(), VerifyMismatchError, InvalidHash)
     else:
         argon2_verify = None
 
@@ -217,11 +235,14 @@ def brute_force(
                     rate = counter.rate(attempts)
                     return CrackResult(True, candidate, attempts, elapsed, rate)
             elif algorithm == "argon2":
-                Type, verify_secret = argon2_verify
-                if verify_secret(target_hash.encode("utf-8"), candidate.encode("utf-8"), type=Type.ID):
+                hasher, verify_mismatch, invalid_hash = argon2_verify
+                try:
+                    hasher.verify(target_hash, candidate)
                     elapsed = time.perf_counter() - start
                     rate = counter.rate(attempts)
                     return CrackResult(True, candidate, attempts, elapsed, rate)
+                except (verify_mismatch, invalid_hash):
+                    pass
             elif algorithm == "scrypt":
                 n, r, p, salt_bytes, digest = scrypt_params
                 value = hashlib.scrypt(candidate.encode("utf-8"), salt=salt_bytes, n=n, r=r, p=p, dklen=len(digest))
