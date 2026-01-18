@@ -8,21 +8,41 @@ from rich.text import Text
 from .algorithms.cracking import brute_force, dictionary_attack, format_rate
 from .algorithms.decoding import (
     decode_base64,
+    decode_base32,
+    decode_base85,
     decode_binary,
     decode_caesar,
+    decode_decimal,
     decode_hex,
+    decode_octal,
     decode_morse_code,
     decode_rot13,
     decode_url,
+    decode_vigenere,
+    decode_xor,
+    decode_atbash,
+    decode_baconian,
+    decode_leet_speak,
+    decode_reverse,
 )
 from .algorithms.encoding import (
     encode_base64,
+    encode_base32,
+    encode_base85,
     encode_binary,
     encode_caesar,
+    encode_decimal,
     encode_hex,
+    encode_octal,
     encode_morse_code,
     encode_rot13,
     encode_url,
+    encode_vigenere,
+    encode_xor,
+    encode_atbash,
+    encode_baconian,
+    encode_leet_speak,
+    encode_reverse,
 )
 from .algorithms.hashing import hash_text
 from .utils.banner import render_banner
@@ -54,20 +74,26 @@ def build_parser() -> argparse.ArgumentParser:
 
     encode_parser = subparsers.add_parser("encode", help="Encode text")
     encode_parser.add_argument("--type", required=True, choices=[
-        "base64", "hex", "binary", "morse", "url", "caesar", "rot13"
+        "base64", "base32", "base85", "hex", "binary", "decimal", "octal",
+        "morse", "url", "caesar", "rot13", "vigenere", "xor", "atbash",
+        "baconian", "leet", "reverse"
     ])
     encode_parser.add_argument("--text", help="Text input")
     encode_parser.add_argument("--file", help="Read input from file")
     encode_parser.add_argument("--shift", type=int, default=3, help="Shift for Caesar")
+    encode_parser.add_argument("--key", help="Key for Vigenere/XOR")
     encode_parser.add_argument("--out", help="Write output to file")
 
     decode_parser = subparsers.add_parser("decode", help="Decode text")
     decode_parser.add_argument("--type", required=True, choices=[
-        "base64", "hex", "binary", "morse", "url", "caesar", "rot13"
+        "base64", "base32", "base85", "hex", "binary", "decimal", "octal",
+        "morse", "url", "caesar", "rot13", "vigenere", "xor", "atbash",
+        "baconian", "leet", "reverse"
     ])
     decode_parser.add_argument("--text", help="Text input")
     decode_parser.add_argument("--file", help="Read input from file")
     decode_parser.add_argument("--shift", type=int, default=3, help="Shift for Caesar")
+    decode_parser.add_argument("--key", help="Key for Vigenere/XOR")
     decode_parser.add_argument("--out", help="Write output to file")
 
     hash_parser = subparsers.add_parser("hash", help="Hash text")
@@ -100,12 +126,22 @@ def build_parser() -> argparse.ArgumentParser:
 
 def handle_encode(args: argparse.Namespace, console: Console) -> str:
     text = resolve_input(args.text, args.file)
+    if args.type in {"vigenere", "xor"} and not args.key:
+        raise ValueError("This algorithm requires --key")
     if args.type == "base64":
         return encode_base64(text)
+    if args.type == "base32":
+        return encode_base32(text)
+    if args.type == "base85":
+        return encode_base85(text)
     if args.type == "hex":
         return encode_hex(text)
     if args.type == "binary":
         return encode_binary(text)
+    if args.type == "decimal":
+        return encode_decimal(text)
+    if args.type == "octal":
+        return encode_octal(text)
     if args.type == "morse":
         return encode_morse_code(text)
     if args.type == "url":
@@ -114,17 +150,39 @@ def handle_encode(args: argparse.Namespace, console: Console) -> str:
         return encode_caesar(text, args.shift)
     if args.type == "rot13":
         return encode_rot13(text)
+    if args.type == "vigenere":
+        return encode_vigenere(text, args.key)
+    if args.type == "xor":
+        return encode_xor(text, args.key)
+    if args.type == "atbash":
+        return encode_atbash(text)
+    if args.type == "baconian":
+        return encode_baconian(text)
+    if args.type == "leet":
+        return encode_leet_speak(text)
+    if args.type == "reverse":
+        return encode_reverse(text)
     raise ValueError("Unsupported encode type")
 
 
 def handle_decode(args: argparse.Namespace, console: Console) -> str:
     text = resolve_input(args.text, args.file)
+    if args.type in {"vigenere", "xor"} and not args.key:
+        raise ValueError("This algorithm requires --key")
     if args.type == "base64":
         return decode_base64(text)
+    if args.type == "base32":
+        return decode_base32(text)
+    if args.type == "base85":
+        return decode_base85(text)
     if args.type == "hex":
         return decode_hex(text)
     if args.type == "binary":
         return decode_binary(text)
+    if args.type == "decimal":
+        return decode_decimal(text)
+    if args.type == "octal":
+        return decode_octal(text)
     if args.type == "morse":
         return decode_morse_code(text)
     if args.type == "url":
@@ -133,6 +191,18 @@ def handle_decode(args: argparse.Namespace, console: Console) -> str:
         return decode_caesar(text, args.shift)
     if args.type == "rot13":
         return decode_rot13(text)
+    if args.type == "vigenere":
+        return decode_vigenere(text, args.key)
+    if args.type == "xor":
+        return decode_xor(text, args.key)
+    if args.type == "atbash":
+        return decode_atbash(text)
+    if args.type == "baconian":
+        return decode_baconian(text)
+    if args.type == "leet":
+        return decode_leet_speak(text)
+    if args.type == "reverse":
+        return decode_reverse(text)
     raise ValueError("Unsupported decode type")
 
 
@@ -301,11 +371,18 @@ def interactive_mode(console: Console, accent: str) -> None:
                 out_path = _get_interactive_output()
 
                 if action == "encode":
-                    enc_options = ["base64", "hex", "binary", "morse", "url", "caesar", "rot13"]
+                    enc_options = [
+                        "base64", "base32", "base85", "hex", "binary", "decimal", "octal",
+                        "morse", "url", "caesar", "rot13", "vigenere", "xor", "atbash",
+                        "baconian", "leet", "reverse",
+                    ]
                     enc_type = choose_option("Encoding type", enc_options, default_index=1)
                     shift = ask_int("Caesar shift", default=3) if enc_type == "caesar" else 3
                     text, file_path = _get_interactive_input("Input source")
-                    args = argparse.Namespace(type=enc_type, text=text or None, file=file_path, shift=shift)
+                    key = None
+                    if enc_type in {"vigenere", "xor"}:
+                        key = ask_text("Key")
+                    args = argparse.Namespace(type=enc_type, text=text or None, file=file_path, shift=shift, key=key)
                     try:
                         result = handle_encode(args, console)
                         output_result(result, out_path, console)
@@ -315,11 +392,18 @@ def interactive_mode(console: Console, accent: str) -> None:
                         continue
 
                 if action == "decode":
-                    dec_options = ["base64", "hex", "binary", "morse", "url", "caesar", "rot13"]
+                    dec_options = [
+                        "base64", "base32", "base85", "hex", "binary", "decimal", "octal",
+                        "morse", "url", "caesar", "rot13", "vigenere", "xor", "atbash",
+                        "baconian", "leet", "reverse",
+                    ]
                     dec_type = choose_option("Decoding type", dec_options, default_index=1)
                     shift = ask_int("Caesar shift", default=3) if dec_type == "caesar" else 3
                     text, file_path = _get_interactive_input("Input source")
-                    args = argparse.Namespace(type=dec_type, text=text or None, file=file_path, shift=shift)
+                    key = None
+                    if dec_type in {"vigenere", "xor"}:
+                        key = ask_text("Key")
+                    args = argparse.Namespace(type=dec_type, text=text or None, file=file_path, shift=shift, key=key)
                     try:
                         result = handle_decode(args, console)
                         output_result(result, out_path, console)
