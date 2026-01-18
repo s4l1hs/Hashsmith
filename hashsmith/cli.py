@@ -318,16 +318,17 @@ def count_wordlist_entries(path: str) -> Optional[int]:
 
 def handle_crack(args: argparse.Namespace, console: Console, accent: str = "cyan") -> int:
     def build_progress() -> Progress:
+        accent_color = accent or "cyan"
         return Progress(
             SpinnerColumn(),
-            TextColumn("[bold blue]{task.description}"),
-            BarColumn(bar_width=None),
+            TextColumn(f"[bold {accent_color}]{{task.description}}"),
+            BarColumn(bar_width=None, style=accent_color, complete_style=accent_color),
             TaskProgressColumn(),
             MofNCompleteColumn(),
-            TextColumn("[bold cyan]•"),
+            TextColumn(f"[bold {accent_color}]•"),
             TimeRemainingColumn(),
-            TextColumn("[bold cyan]•"),
-            TextColumn("[green]{task.fields[speed]} H/s"),
+            TextColumn(f"[bold {accent_color}]•"),
+            TextColumn(f"[bold {accent_color}]{{task.fields[speed]}} H/s"),
             console=console,
         )
 
