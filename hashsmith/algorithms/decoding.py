@@ -6,16 +6,25 @@ from .morse import decode_morse
 
 
 def decode_base64(text: str) -> str:
-    return base64.b64decode(text.encode("utf-8")).decode("utf-8", errors="replace")
+    try:
+        return base64.b64decode(text.encode("utf-8"), validate=True).decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError):
+        raise ValueError("Invalid Base64 format provided")
 
 
 def decode_hex(text: str) -> str:
-    return binascii.unhexlify(text.encode("utf-8")).decode("utf-8", errors="replace")
+    try:
+        return binascii.unhexlify(text.encode("utf-8")).decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError):
+        raise ValueError("Invalid Hex format provided")
 
 
 def decode_binary(text: str) -> str:
     bits = text.strip().split()
-    return bytes(int(chunk, 2) for chunk in bits).decode("utf-8", errors="replace")
+    try:
+        return bytes(int(chunk, 2) for chunk in bits).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        raise ValueError("Invalid Binary format provided")
 
 
 def decode_url(text: str) -> str:

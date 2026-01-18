@@ -26,8 +26,9 @@ from .algorithms.encoding import (
 )
 from .algorithms.hashing import hash_text
 from .utils.banner import render_banner
-from .utils.io import resolve_input, write_text_to_file
+from .utils.io import read_text_from_file, resolve_input, write_text_to_file
 from .utils.wordlist import iter_wordlist
+from pathlib import Path
 
 
 THEMES = {
@@ -135,9 +136,16 @@ def handle_decode(args: argparse.Namespace, console: Console) -> str:
     raise ValueError("Unsupported decode type")
 
 
-def handle_hash(args: argparse.Namespace) -> str:
+def handle_hash(args: argparse.Namespace, console: Console) -> str:
     text = resolve_input(args.text, args.file)
     return hash_text(text, args.type, args.salt, args.salt_mode)
+
+
+def is_hex_string(value: str) -> bool:
+    if not value:
+        return False
+    value = value.strip()
+    return all(ch in "0123456789abcdefABCDEF" for ch in value)
 
 
 def handle_crack(args: argparse.Namespace, console: Console, accent: str = "cyan") -> int:
@@ -254,6 +262,28 @@ def interactive_mode(console: Console, accent: str) -> None:
         console.print("[red]Too many invalid attempts. Exiting.[/red]")
         raise SystemExit(2)
 
+    # Helper: get input either text or file (reusable)
+    def _get_interactive_input(prompt_label: str) -> tuple[Optional[str], Optional[str]]:
+        while True:
+            choice = choose_option(prompt_label, ["enter custom text", "use file"], default_index=1)
+            if choice == "enter custom text":
+                txt = ask_text("Enter text", default="Hashsmith_Sample")
+                return txt, None
+            if choice == "use file":
+                fp = ask_text("File path")
+                try:
+                    content = read_text_from_file(fp)
+                except ValueError as exc:
+                    console.print(f"[bold red]Error:[/bold red] {exc}")
+                    continue
+                return content, None
+
+    def _get_interactive_output() -> Optional[str]:
+        if ask_yes_no("Save output to file?", default=False):
+            out_choice = choose_option("Output path", ["use default output.txt", "enter custom path"], default_index=1)
+            return "output.txt" if out_choice.startswith("use default") else ask_text("Output file path")
+        return None
+
     actions = ["encode", "decode", "hash", "crack", "set-theme"]
     while True:
         try:
@@ -268,22 +298,13 @@ def interactive_mode(console: Console, accent: str) -> None:
                 continue
 
             if action in {"encode", "decode", "hash"}:
-                out_path = None
-                if ask_yes_no("Save output to file?", default=False):
-                    out_choice = choose_option("Output path", ["use default output.txt", "enter custom path"], default_index=1)
-                    out_path = "output.txt" if out_choice.startswith("use default") else ask_text("Output file path")
+                out_path = _get_interactive_output()
 
                 if action == "encode":
                     enc_options = ["base64", "hex", "binary", "morse", "url", "caesar", "rot13"]
                     enc_type = choose_option("Encoding type", enc_options, default_index=1)
                     shift = ask_int("Caesar shift", default=3) if enc_type == "caesar" else 3
-                    input_mode = choose_option("Input source", ["use sample text", "enter custom text", "use file"], default_index=1)
-                    text = "hello" if input_mode == "use sample text" else None
-                    file_path = None
-                    if input_mode == "enter custom text":
-                        text = ask_text("Enter text")
-                    elif input_mode == "use file":
-                        file_path = ask_text("File path")
+                    text, file_path = _get_interactive_input("Input source")
                     args = argparse.Namespace(type=enc_type, text=text or None, file=file_path, shift=shift)
                     result = handle_encode(args, console)
                     output_result(result, out_path, console)
@@ -293,22 +314,7 @@ def interactive_mode(console: Console, accent: str) -> None:
                     dec_options = ["base64", "hex", "binary", "morse", "url", "caesar", "rot13"]
                     dec_type = choose_option("Decoding type", dec_options, default_index=1)
                     shift = ask_int("Caesar shift", default=3) if dec_type == "caesar" else 3
-                    sample_map = {
-                        "base64": "aGVsbG8=",
-                        "hex": "68656c6c6f",
-                        "binary": "01101000 01100101 01101100 01101100 01101111",
-                        "morse": ".... . .-.. .-.. ---",
-                        "url": "hello%20world",
-                        "caesar": "khoor",
-                        "rot13": "uryyb",
-                    }
-                    input_mode = choose_option("Input source", ["use sample", "enter custom", "use file"], default_index=1)
-                    text = sample_map.get(dec_type, "") if input_mode == "use sample" else None
-                    file_path = None
-                    if input_mode == "enter custom":
-                        text = ask_text("Enter encoded text")
-                    elif input_mode == "use file":
-                        file_path = ask_text("File path")
+                    text, file_path = _get_interactive_input("Input source")
                     args = argparse.Namespace(type=dec_type, text=text or None, file=file_path, shift=shift)
                     result = handle_decode(args, console)
                     output_result(result, out_path, console)
@@ -316,13 +322,7 @@ def interactive_mode(console: Console, accent: str) -> None:
 
                 hash_options = ["md5", "sha1", "sha256", "sha512"]
                 hash_type = choose_option("Hash type", hash_options, default_index=3)
-                input_mode = choose_option("Input source", ["use sample text", "enter custom text", "use file"], default_index=1)
-                text = "hello" if input_mode == "use sample text" else None
-                file_path = None
-                if input_mode == "enter custom text":
-                    text = ask_text("Enter text")
-                elif input_mode == "use file":
-                    file_path = ask_text("File path")
+                text, file_path = _get_interactive_input("Input source")
                 salt = ""
                 if ask_yes_no("Use salt?", default=False):
                     salt = ask_text("Salt value")
@@ -334,14 +334,30 @@ def interactive_mode(console: Console, accent: str) -> None:
 
             crack_type = choose_option("Hash type", ["md5", "sha1", "sha256", "sha512"], default_index=1)
             mode = choose_option("Mode", ["dict", "brute"], default_index=1)
-            sample_word = "password" if mode == "dict" else "ab"
-            sample_hash = hash_text(sample_word, crack_type)
-            target_choice = choose_option(
-                "Target hash",
-                [f"use sample ({sample_word})", "enter custom"],
-                default_index=1,
-            )
-            target_hash = sample_hash if target_choice.startswith("use sample") else ask_text("Target hash")
+            while True:
+                target_hash = ask_text("Target hash")
+                if not is_hex_string(target_hash):
+                    console.print("[bold red]Error:[/bold red] Hash must be hexadecimal (0-9, a-f).")
+                    continue
+                break
+            # Auto-detect hash type by length
+            detected = None
+            l = len(target_hash.strip())
+            if l == 32:
+                detected = "md5"
+            elif l == 40:
+                detected = "sha1"
+            elif l == 64:
+                detected = "sha256"
+            elif l == 128:
+                detected = "sha512"
+            if detected:
+                if ask_yes_no(f"Detected: {detected.upper()}. Use this?", default=True):
+                    crack_type = detected
+                else:
+                    crack_type = choose_option("Hash type", ["md5", "sha1", "sha256", "sha512"], default_index=1)
+            else:
+                crack_type = choose_option("Hash type", ["md5", "sha1", "sha256", "sha512"], default_index=1)
             salt = ""
             if ask_yes_no("Use salt?", default=False):
                 salt = ask_text("Salt value")
@@ -402,24 +418,42 @@ def main() -> None:
         elif args.command == "encode":
             if not args.no_banner:
                 render_banner(console, accent)
-            result = handle_encode(args, console)
-            output_result(result, args.out, console)
+            try:
+                result = handle_encode(args, console)
+                output_result(result, args.out, console)
+            except ValueError as exc:
+                console.print(f"[bold red]Error:[/bold red] {exc}")
+                raise SystemExit(2)
         elif args.command == "decode":
             if not args.no_banner:
                 render_banner(console, accent)
-            result = handle_decode(args, console)
-            output_result(result, args.out, console)
+            try:
+                result = handle_decode(args, console)
+                output_result(result, args.out, console)
+            except ValueError as exc:
+                console.print(f"[bold red]Error:[/bold red] {exc}")
+                raise SystemExit(2)
         elif args.command == "hash":
             if not args.no_banner:
                 render_banner(console, accent)
-            result = handle_hash(args)
-            output_result(result, args.out, console)
+            try:
+                result = handle_hash(args, console)
+                output_result(result, args.out, console)
+            except ValueError as exc:
+                console.print(f"[bold red]Error:[/bold red] {exc}")
+                raise SystemExit(2)
         elif args.command == "crack":
             if not args.no_banner:
                 render_banner(console, accent)
+            if not is_hex_string(args.target_hash):
+                console.print("[bold red]Error:[/bold red] Hash must be hexadecimal (0-9, a-f).")
+                raise SystemExit(2)
             raise SystemExit(handle_crack(args, console, accent))
         else:
             parser.print_help()
     except KeyboardInterrupt:
         console.print(f"\n[bold {accent}]Goodbye[/bold {accent}]")
         raise SystemExit(0)
+    except Exception:
+        console.print("[bold red]Error:[/bold red] An unexpected error occurred. Please report this issue.")
+        raise SystemExit(1)
