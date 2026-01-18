@@ -188,9 +188,12 @@ def output_result(result: str, out: Optional[str], console: Console) -> None:
 def interactive_mode(console: Console, accent: str) -> None:
     console.print(f"[bold {accent}]Interactive mode[/bold {accent}]")
 
+    class BackAction(Exception):
+        pass
+
     def maybe_exit(value: str) -> None:
-        if value.strip().lower() in {"bye", "exit"}:
-            console.print(f"[bold {accent}]Goodbye.[/bold {accent}]")
+        if value.strip().lower() in {"bye", "exit", "q", "quit"}:
+            console.print(f"[bold {accent}]Goodbye[/bold {accent}]")
             raise SystemExit(0)
 
     def ask_text(label: str, default: Optional[str] = None) -> str:
@@ -215,9 +218,20 @@ def interactive_mode(console: Console, accent: str) -> None:
         attempts = 0
         while attempts < 3:
             console.print(f"\n{label}:")
+            console.print(f"  [{accent}]0[/{accent}]) Back")
             for idx, option in enumerate(options, start=1):
                 console.print(f"  [{accent}]{idx}[/{accent}]) {option}")
-            choice = ask_int("Select option", default_index)
+            console.print(f"  [{accent}]q[/{accent}]) Quit")
+            raw = ask_text("Select option", default=str(default_index)).strip().lower()
+            if raw == "0":
+                raise BackAction()
+            maybe_exit(raw)
+            try:
+                choice = int(raw)
+            except ValueError:
+                attempts += 1
+                console.print("[red]Invalid selection.[/red] Please try again.")
+                continue
             if 1 <= choice <= len(options):
                 return options[choice - 1]
             attempts += 1
@@ -242,129 +256,131 @@ def interactive_mode(console: Console, accent: str) -> None:
 
     actions = ["encode", "decode", "hash", "crack", "set-theme"]
     while True:
-        action = choose_option("Choose action", actions, default_index=1)
+        try:
+            action = choose_option("Choose action", actions, default_index=1)
 
-        if action == "set-theme":
-            theme_keys = list(THEMES.keys())
-            selected = choose_option("Select theme", theme_keys, default_index=1)
-            accent = THEMES.get(selected, "cyan")
-            render_banner(console, accent)
-            console.print(f"Theme set to [bold {accent}]{selected}[/bold {accent}]")
+            if action == "set-theme":
+                theme_keys = list(THEMES.keys())
+                selected = choose_option("Select theme", theme_keys, default_index=1)
+                accent = THEMES.get(selected, "cyan")
+                render_banner(console, accent)
+                console.print(f"Theme set to [bold {accent}]{selected}[/bold {accent}]")
+                continue
+
+            if action in {"encode", "decode", "hash"}:
+                out_path = None
+                if ask_yes_no("Save output to file?", default=False):
+                    out_choice = choose_option("Output path", ["use default output.txt", "enter custom path"], default_index=1)
+                    out_path = "output.txt" if out_choice.startswith("use default") else ask_text("Output file path")
+
+                if action == "encode":
+                    enc_options = ["base64", "hex", "binary", "morse", "url", "caesar", "rot13"]
+                    enc_type = choose_option("Encoding type", enc_options, default_index=1)
+                    shift = ask_int("Caesar shift", default=3) if enc_type == "caesar" else 3
+                    input_mode = choose_option("Input source", ["use sample text", "enter custom text", "use file"], default_index=1)
+                    text = "hello" if input_mode == "use sample text" else None
+                    file_path = None
+                    if input_mode == "enter custom text":
+                        text = ask_text("Enter text")
+                    elif input_mode == "use file":
+                        file_path = ask_text("File path")
+                    args = argparse.Namespace(type=enc_type, text=text or None, file=file_path, shift=shift)
+                    result = handle_encode(args, console)
+                    output_result(result, out_path, console)
+                    return
+
+                if action == "decode":
+                    dec_options = ["base64", "hex", "binary", "morse", "url", "caesar", "rot13"]
+                    dec_type = choose_option("Decoding type", dec_options, default_index=1)
+                    shift = ask_int("Caesar shift", default=3) if dec_type == "caesar" else 3
+                    sample_map = {
+                        "base64": "aGVsbG8=",
+                        "hex": "68656c6c6f",
+                        "binary": "01101000 01100101 01101100 01101100 01101111",
+                        "morse": ".... . .-.. .-.. ---",
+                        "url": "hello%20world",
+                        "caesar": "khoor",
+                        "rot13": "uryyb",
+                    }
+                    input_mode = choose_option("Input source", ["use sample", "enter custom", "use file"], default_index=1)
+                    text = sample_map.get(dec_type, "") if input_mode == "use sample" else None
+                    file_path = None
+                    if input_mode == "enter custom":
+                        text = ask_text("Enter encoded text")
+                    elif input_mode == "use file":
+                        file_path = ask_text("File path")
+                    args = argparse.Namespace(type=dec_type, text=text or None, file=file_path, shift=shift)
+                    result = handle_decode(args, console)
+                    output_result(result, out_path, console)
+                    return
+
+                hash_options = ["md5", "sha1", "sha256", "sha512"]
+                hash_type = choose_option("Hash type", hash_options, default_index=3)
+                input_mode = choose_option("Input source", ["use sample text", "enter custom text", "use file"], default_index=1)
+                text = "hello" if input_mode == "use sample text" else None
+                file_path = None
+                if input_mode == "enter custom text":
+                    text = ask_text("Enter text")
+                elif input_mode == "use file":
+                    file_path = ask_text("File path")
+                salt = ""
+                if ask_yes_no("Use salt?", default=False):
+                    salt = ask_text("Salt value")
+                salt_mode = choose_option("Salt mode", ["prefix", "suffix"], default_index=1) if salt else "prefix"
+                args = argparse.Namespace(type=hash_type, text=text or None, file=file_path, salt=salt, salt_mode=salt_mode)
+                result = handle_hash(args)
+                output_result(result, out_path, console)
+                return
+
+            crack_type = choose_option("Hash type", ["md5", "sha1", "sha256", "sha512"], default_index=1)
+            mode = choose_option("Mode", ["dict", "brute"], default_index=1)
+            sample_word = "password" if mode == "dict" else "ab"
+            sample_hash = hash_text(sample_word, crack_type)
+            target_choice = choose_option(
+                "Target hash",
+                [f"use sample ({sample_word})", "enter custom"],
+                default_index=1,
+            )
+            target_hash = sample_hash if target_choice.startswith("use sample") else ask_text("Target hash")
+            salt = ""
+            if ask_yes_no("Use salt?", default=False):
+                salt = ask_text("Salt value")
+            salt_mode = choose_option("Salt mode", ["prefix", "suffix"], default_index=1) if salt else "prefix"
+
+            if mode == "dict":
+                wordlist_choice = choose_option("Wordlist", ["use default wordlists/common.txt", "enter custom path"], default_index=1)
+                wordlist = "wordlists/common.txt" if wordlist_choice.startswith("use default") else ask_text("Wordlist path")
+                args = argparse.Namespace(
+                    type=crack_type,
+                    target_hash=target_hash,
+                    mode=mode,
+                    wordlist=wordlist,
+                    charset="",
+                    min_len=1,
+                    max_len=4,
+                    salt=salt,
+                    salt_mode=salt_mode,
+                )
+                raise SystemExit(handle_crack(args, console, accent))
+
+            charset_choice = choose_option("Charset", ["use default [a-z0-9]", "enter custom"], default_index=1)
+            charset = "abcdefghijklmnopqrstuvwxyz0123456789" if charset_choice.startswith("use default") else ask_text("Charset")
+            min_len = ask_int("Min length", default=1)
+            max_len = ask_int("Max length", default=4)
+            args = argparse.Namespace(
+                type=crack_type,
+                target_hash=target_hash,
+                mode=mode,
+                wordlist=None,
+                charset=charset,
+                min_len=min_len,
+                max_len=max_len,
+                salt=salt,
+                salt_mode=salt_mode,
+            )
+            raise SystemExit(handle_crack(args, console, accent))
+        except BackAction:
             continue
-        break
-
-    if action in {"encode", "decode", "hash"}:
-        out_path = None
-        if ask_yes_no("Save output to file?", default=False):
-            out_choice = choose_option("Output path", ["use default output.txt", "enter custom path"], default_index=1)
-            out_path = "output.txt" if out_choice.startswith("use default") else ask_text("Output file path")
-
-        if action == "encode":
-            enc_options = ["base64", "hex", "binary", "morse", "url", "caesar", "rot13"]
-            enc_type = choose_option("Encoding type", enc_options, default_index=1)
-            shift = ask_int("Caesar shift", default=3) if enc_type == "caesar" else 3
-            input_mode = choose_option("Input source", ["use sample text", "enter custom text", "use file"], default_index=1)
-            text = "hello" if input_mode == "use sample text" else None
-            file_path = None
-            if input_mode == "enter custom text":
-                text = ask_text("Enter text")
-            elif input_mode == "use file":
-                file_path = ask_text("File path")
-            args = argparse.Namespace(type=enc_type, text=text or None, file=file_path, shift=shift)
-            result = handle_encode(args, console)
-            output_result(result, out_path, console)
-            return
-
-        if action == "decode":
-            dec_options = ["base64", "hex", "binary", "morse", "url", "caesar", "rot13"]
-            dec_type = choose_option("Decoding type", dec_options, default_index=1)
-            shift = ask_int("Caesar shift", default=3) if dec_type == "caesar" else 3
-            sample_map = {
-                "base64": "aGVsbG8=",
-                "hex": "68656c6c6f",
-                "binary": "01101000 01100101 01101100 01101100 01101111",
-                "morse": ".... . .-.. .-.. ---",
-                "url": "hello%20world",
-                "caesar": "khoor",
-                "rot13": "uryyb",
-            }
-            input_mode = choose_option("Input source", ["use sample", "enter custom", "use file"], default_index=1)
-            text = sample_map.get(dec_type, "") if input_mode == "use sample" else None
-            file_path = None
-            if input_mode == "enter custom":
-                text = ask_text("Enter encoded text")
-            elif input_mode == "use file":
-                file_path = ask_text("File path")
-            args = argparse.Namespace(type=dec_type, text=text or None, file=file_path, shift=shift)
-            result = handle_decode(args, console)
-            output_result(result, out_path, console)
-            return
-
-        hash_options = ["md5", "sha1", "sha256", "sha512"]
-        hash_type = choose_option("Hash type", hash_options, default_index=3)
-        input_mode = choose_option("Input source", ["use sample text", "enter custom text", "use file"], default_index=1)
-        text = "hello" if input_mode == "use sample text" else None
-        file_path = None
-        if input_mode == "enter custom text":
-            text = ask_text("Enter text")
-        elif input_mode == "use file":
-            file_path = ask_text("File path")
-        salt = ""
-        if ask_yes_no("Use salt?", default=False):
-            salt = ask_text("Salt value")
-        salt_mode = choose_option("Salt mode", ["prefix", "suffix"], default_index=1) if salt else "prefix"
-        args = argparse.Namespace(type=hash_type, text=text or None, file=file_path, salt=salt, salt_mode=salt_mode)
-        result = handle_hash(args)
-        output_result(result, out_path, console)
-        return
-
-    crack_type = choose_option("Hash type", ["md5", "sha1", "sha256", "sha512"], default_index=1)
-    mode = choose_option("Mode", ["dict", "brute"], default_index=1)
-    sample_word = "password" if mode == "dict" else "ab"
-    sample_hash = hash_text(sample_word, crack_type)
-    target_choice = choose_option(
-        "Target hash",
-        [f"use sample ({sample_word})", "enter custom"],
-        default_index=1,
-    )
-    target_hash = sample_hash if target_choice.startswith("use sample") else ask_text("Target hash")
-    salt = ""
-    if ask_yes_no("Use salt?", default=False):
-        salt = ask_text("Salt value")
-    salt_mode = choose_option("Salt mode", ["prefix", "suffix"], default_index=1) if salt else "prefix"
-
-    if mode == "dict":
-        wordlist_choice = choose_option("Wordlist", ["use default wordlists/common.txt", "enter custom path"], default_index=1)
-        wordlist = "wordlists/common.txt" if wordlist_choice.startswith("use default") else ask_text("Wordlist path")
-        args = argparse.Namespace(
-            type=crack_type,
-            target_hash=target_hash,
-            mode=mode,
-            wordlist=wordlist,
-            charset="",
-            min_len=1,
-            max_len=4,
-            salt=salt,
-            salt_mode=salt_mode,
-        )
-        raise SystemExit(handle_crack(args, console, accent))
-
-    charset_choice = choose_option("Charset", ["use default [a-z0-9]", "enter custom"], default_index=1)
-    charset = "abcdefghijklmnopqrstuvwxyz0123456789" if charset_choice.startswith("use default") else ask_text("Charset")
-    min_len = ask_int("Min length", default=1)
-    max_len = ask_int("Max length", default=4)
-    args = argparse.Namespace(
-        type=crack_type,
-        target_hash=target_hash,
-        mode=mode,
-        wordlist=None,
-        charset=charset,
-        min_len=min_len,
-        max_len=max_len,
-        salt=salt,
-        salt_mode=salt_mode,
-    )
-    raise SystemExit(handle_crack(args, console, accent))
 
 
 def main() -> None:
