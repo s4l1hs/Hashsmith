@@ -1,5 +1,6 @@
 import hashlib
-from typing import Callable, Dict
+import os
+from typing import Callable, Dict, Optional, Tuple
 
 try:
     import bcrypt  # type: ignore
@@ -10,7 +11,9 @@ except Exception:  # pragma: no cover
 HASH_FUNCS: Dict[str, Callable[[bytes], "hashlib._Hash"]] = {
     "md5": hashlib.md5,
     "sha1": hashlib.sha1,
+    "sha224": hashlib.sha224,
     "sha256": hashlib.sha256,
+    "sha384": hashlib.sha384,
     "sha512": hashlib.sha512,
     "sha3_224": hashlib.sha3_224,
     "sha3_256": hashlib.sha3_256,
@@ -107,12 +110,79 @@ def _ntlm(text: str) -> str:
     return _md4(text.encode("utf-16le")).hex()
 
 
+def _mssql2000(text: str) -> str:
+    return hashlib.sha1(text.encode("utf-16le")).hexdigest().upper()
+
+
+def _mssql2005_hash(text: str, salt: bytes) -> str:
+    return hashlib.sha1(salt + text.encode("utf-16le")).hexdigest().upper()
+
+
+def _parse_salt_bytes(salt: str, default_len: int = 16) -> bytes:
+    if not salt:
+        return os.urandom(default_len)
+    salt_value = salt.strip()
+    if salt_value.startswith("0x"):
+        salt_value = salt_value[2:]
+    if salt_value and all(ch in "0123456789abcdefABCDEF" for ch in salt_value) and len(salt_value) % 2 == 0:
+        return bytes.fromhex(salt_value)
+    return salt_value.encode("utf-8")
+
+
+def _argon2_hash(text: str, salt: str) -> str:
+    try:
+        from argon2.low_level import Type, hash_secret  # type: ignore
+    except Exception as exc:  # pragma: no cover
+        raise ValueError("argon2-cffi library is required for argon2 hashing") from exc
+
+    salt_bytes = _parse_salt_bytes(salt, default_len=16)
+    return hash_secret(
+        text.encode("utf-8"),
+        salt_bytes,
+        time_cost=2,
+        memory_cost=102400,
+        parallelism=8,
+        hash_len=32,
+        type=Type.ID,
+    ).decode("utf-8")
+
+
+def _scrypt_hash(text: str, salt: str) -> str:
+    salt_bytes = _parse_salt_bytes(salt, default_len=16)
+    n = 2**14
+    r = 8
+    p = 1
+    dklen = 64
+    digest = hashlib.scrypt(text.encode("utf-8"), salt=salt_bytes, n=n, r=r, p=p, dklen=dklen)
+    return f"scrypt${n}${r}${p}${salt_bytes.hex()}${digest.hex()}"
+
+
+def _postgres_md5(text: str, username: str) -> str:
+    if not username:
+        raise ValueError("postgres requires a username as salt (use --salt)")
+    digest = hashlib.md5(f"{text}{username}".encode("utf-8")).hexdigest()
+    return f"md5{digest}"
+
+
 def hash_text(text: str, algorithm: str, salt: str = "", salt_mode: str = "prefix") -> str:
     algo = algorithm.lower()
-    if algo not in HASH_FUNCS and algo not in {"md4", "ntlm", "mysql323", "mysql41", "bcrypt"}:
+    if algo not in HASH_FUNCS and algo not in {
+        "md4",
+        "ntlm",
+        "mysql323",
+        "mysql41",
+        "bcrypt",
+        "argon2",
+        "scrypt",
+        "mssql2000",
+        "mssql2005",
+        "mssql2012",
+        "postgres",
+    }:
         raise ValueError(f"Unsupported hash algorithm: {algorithm}")
 
-    if salt:
+    salt_in_algorithms = {"bcrypt", "argon2", "scrypt", "postgres", "mssql2000", "mssql2005", "mssql2012"}
+    if salt and algo not in salt_in_algorithms:
         if salt_mode == "suffix":
             text = f"{text}{salt}"
         else:
@@ -126,6 +196,18 @@ def hash_text(text: str, algorithm: str, salt: str = "", salt_mode: str = "prefi
         return _mysql323(text)
     if algo == "mysql41":
         return _mysql41(text)
+    if algo == "mssql2000":
+        return _mssql2000(text)
+    if algo in {"mssql2005", "mssql2012"}:
+        salt_bytes = _parse_salt_bytes(salt, default_len=4)
+        digest = _mssql2005_hash(text, salt_bytes)
+        return f"0x0100{salt_bytes.hex()}{digest}"
+    if algo == "postgres":
+        return _postgres_md5(text, salt)
+    if algo == "argon2":
+        return _argon2_hash(text, salt)
+    if algo == "scrypt":
+        return _scrypt_hash(text, salt)
     if algo == "bcrypt":
         if bcrypt is None:
             raise ValueError("bcrypt library is required for bcrypt hashing")

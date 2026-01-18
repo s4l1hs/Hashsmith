@@ -125,19 +125,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     hash_parser = subparsers.add_parser("hash", help="Hash text")
     hash_parser.add_argument("--type", required=True, choices=[
-        "md5", "md4", "sha1", "sha256", "sha512", "sha3_224", "sha3_256", "sha3_512",
-        "blake2b", "blake2s", "ntlm", "mysql323", "mysql41", "bcrypt"
+        "md5", "md4", "sha1", "sha224", "sha256", "sha384", "sha512", "sha3_224", "sha3_256", "sha3_512",
+        "blake2b", "blake2s", "ntlm", "mysql323", "mysql41", "bcrypt",
+        "argon2", "scrypt", "mssql2000", "mssql2005", "mssql2012", "postgres"
     ])
     hash_parser.add_argument("--text", help="Text input")
     hash_parser.add_argument("--file", help="Read input from file")
     hash_parser.add_argument("--salt", default="", help="Salt value")
     hash_parser.add_argument("--salt-mode", default="prefix", choices=["prefix", "suffix"])
+    hash_parser.add_argument("--out-encoding", default="hex", choices=["hex", "base58"], help="Output encoding for hex hashes")
     hash_parser.add_argument("--out", help="Write output to file")
 
     crack_parser = subparsers.add_parser("crack", help="Crack hash")
     crack_parser.add_argument("--type", required=True, choices=[
-        "auto", "md5", "md4", "sha1", "sha256", "sha512", "sha3_224", "sha3_256", "sha3_512",
-        "blake2b", "blake2s", "ntlm", "mysql323", "mysql41", "bcrypt"
+        "auto", "md5", "md4", "sha1", "sha224", "sha256", "sha384", "sha512", "sha3_224", "sha3_256", "sha3_512",
+        "blake2b", "blake2s", "ntlm", "mysql323", "mysql41", "bcrypt",
+        "argon2", "scrypt", "mssql2000", "mssql2005", "mssql2012", "postgres"
     ])
     crack_parser.add_argument("--hash", required=True, dest="target_hash")
     crack_parser.add_argument("--mode", required=True, choices=["dict", "brute"])
@@ -266,7 +269,14 @@ def handle_decode(args: argparse.Namespace, console: Console) -> str:
 
 def handle_hash(args: argparse.Namespace, console: Console) -> str:
     text = resolve_input(args.text, args.file)
-    return hash_text(text, args.type, args.salt, args.salt_mode)
+    result = hash_text(text, args.type, args.salt, args.salt_mode)
+    out_encoding = getattr(args, "out_encoding", "hex")
+    if out_encoding == "base58":
+        hex_value = result[2:] if result.startswith("0x") else result
+        if not is_hex_string(hex_value):
+            raise ValueError("Base58 output is only supported for hex hashes")
+        result = encode_base58_bytes(bytes.fromhex(hex_value))
+    return result
 
 
 def is_hex_string(value: str) -> bool:
@@ -274,6 +284,24 @@ def is_hex_string(value: str) -> bool:
         return False
     value = value.strip()
     return all(ch in "0123456789abcdefABCDEF" for ch in value)
+
+
+def encode_base58_bytes(data: bytes) -> str:
+    alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+    if not data:
+        return alphabet[0]
+    num = int.from_bytes(data, "big")
+    enc = []
+    while num > 0:
+        num, rem = divmod(num, 58)
+        enc.append(alphabet[rem])
+    pad = 0
+    for b in data:
+        if b == 0:
+            pad += 1
+        else:
+            break
+    return "1" * pad + "".join(reversed(enc))
 
 
 def count_wordlist_entries(path: str) -> Optional[int]:
@@ -581,18 +609,29 @@ def interactive_mode(console: Console, accent: str) -> None:
                         continue
 
                 hash_options = [
-                    "md5", "md4", "sha1", "sha256", "sha512", "sha3_224", "sha3_256", "sha3_512",
+                    "md5", "md4", "sha1", "sha224", "sha256", "sha384", "sha512", "sha3_224", "sha3_256", "sha3_512",
                     "blake2b", "blake2s", "ntlm", "mysql323", "mysql41", "bcrypt",
+                    "argon2", "scrypt", "mssql2000", "mssql2005", "mssql2012", "postgres",
                 ]
                 hash_type = choose_option("Hash type", hash_options, default_index=3)
                 text, file_path = _get_interactive_input("Input source")
                 salt = ""
                 if hash_type == "bcrypt":
                     salt = ask_text("Salt (or rounds)", default="12")
+                elif hash_type == "postgres":
+                    salt = ask_text("Username (salt)")
                 elif ask_yes_no("Use salt?", default=False):
                     salt = ask_text("Salt value")
                 salt_mode = choose_option("Salt mode", ["prefix", "suffix"], default_index=1) if salt else "prefix"
-                args = argparse.Namespace(type=hash_type, text=text or None, file=file_path, salt=salt, salt_mode=salt_mode)
+                out_encoding = choose_option("Output encoding", ["hex", "base58"], default_index=1)
+                args = argparse.Namespace(
+                    type=hash_type,
+                    text=text or None,
+                    file=file_path,
+                    salt=salt,
+                    salt_mode=salt_mode,
+                    out_encoding=out_encoding,
+                )
                 try:
                     result = handle_hash(args, console)
                     output_result(result, out_path, console)
@@ -604,15 +643,16 @@ def interactive_mode(console: Console, accent: str) -> None:
             crack_type = choose_option(
                 "Hash type",
                 [
-                    "auto", "md5", "md4", "sha1", "sha256", "sha512", "sha3_224", "sha3_256", "sha3_512",
+                    "auto", "md5", "md4", "sha1", "sha224", "sha256", "sha384", "sha512", "sha3_224", "sha3_256", "sha3_512",
                     "blake2b", "blake2s", "ntlm", "mysql323", "mysql41", "bcrypt",
+                    "argon2", "scrypt", "mssql2000", "mssql2005", "mssql2012", "postgres",
                 ],
                 default_index=1,
             )
             mode = choose_option("Mode", ["dict", "brute"], default_index=1)
             while True:
                 target_hash = ask_text("Target hash")
-                if crack_type != "auto" and crack_type != "bcrypt" and not is_hex_string(target_hash) and not target_hash.startswith("*"):
+                if crack_type != "auto" and crack_type not in {"bcrypt", "argon2", "scrypt", "postgres"} and not is_hex_string(target_hash) and not target_hash.startswith("*") and not target_hash.lower().startswith("0x0100"):
                     console.print("[bold red]Error:[/bold red] Hash must be hexadecimal (0-9, a-f).")
                     continue
                 break
@@ -715,7 +755,7 @@ def main() -> None:
         elif args.command == "crack":
             if not args.no_banner:
                 render_banner(console, accent)
-            if args.type != "auto" and args.type != "bcrypt" and not is_hex_string(args.target_hash) and not args.target_hash.startswith("*"):
+            if args.type != "auto" and args.type not in {"bcrypt", "argon2", "scrypt", "postgres"} and not is_hex_string(args.target_hash) and not args.target_hash.startswith("*") and not args.target_hash.lower().startswith("0x0100"):
                 console.print("[bold red]Error:[/bold red] Hash must be hexadecimal (0-9, a-f).")
                 raise SystemExit(2)
             if args.type == "auto":
