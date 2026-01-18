@@ -1,4 +1,5 @@
 import argparse
+import os
 from typing import Optional
 
 from rich.console import Console
@@ -60,6 +61,7 @@ from .algorithms.hashing import hash_text
 from .utils.banner import render_banner
 from .utils.io import read_text_from_file, resolve_input, write_text_to_file
 from .utils.wordlist import iter_wordlist
+from .utils.hashdetect import detect_hash_types
 from pathlib import Path
 
 
@@ -112,7 +114,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     hash_parser = subparsers.add_parser("hash", help="Hash text")
     hash_parser.add_argument("--type", required=True, choices=[
-        "md5", "sha1", "sha256", "sha512"
+        "md5", "md4", "sha1", "sha256", "sha512", "sha3_224", "sha3_256", "sha3_512",
+        "blake2b", "blake2s", "ntlm", "mysql323", "mysql41", "bcrypt"
     ])
     hash_parser.add_argument("--text", help="Text input")
     hash_parser.add_argument("--file", help="Read input from file")
@@ -122,7 +125,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     crack_parser = subparsers.add_parser("crack", help="Crack hash")
     crack_parser.add_argument("--type", required=True, choices=[
-        "md5", "sha1", "sha256", "sha512"
+        "auto", "md5", "md4", "sha1", "sha256", "sha512", "sha3_224", "sha3_256", "sha3_512",
+        "blake2b", "blake2s", "ntlm", "mysql323", "mysql41", "bcrypt"
     ])
     crack_parser.add_argument("--hash", required=True, dest="target_hash")
     crack_parser.add_argument("--mode", required=True, choices=["dict", "brute"])
@@ -132,6 +136,7 @@ def build_parser() -> argparse.ArgumentParser:
     crack_parser.add_argument("--max-len", type=int, default=4)
     crack_parser.add_argument("--salt", default="")
     crack_parser.add_argument("--salt-mode", default="prefix", choices=["prefix", "suffix"])
+    crack_parser.add_argument("--workers", type=int, default=0, help="Parallel workers for dictionary attack (0=auto)")
 
     subparsers.add_parser("interactive", help="Guided interactive mode")
 
@@ -262,6 +267,8 @@ def is_hex_string(value: str) -> bool:
 
 def handle_crack(args: argparse.Namespace, console: Console, accent: str = "cyan") -> int:
     if args.mode == "dict":
+        if args.workers < 1:
+            args.workers = os.cpu_count() or 1
         if not args.wordlist:
             console.print("[red]--wordlist is required for dict mode[/red]")
             return 2
@@ -271,6 +278,7 @@ def handle_crack(args: argparse.Namespace, console: Console, accent: str = "cyan
             iter_wordlist(args.wordlist),
             args.salt,
             args.salt_mode,
+            workers=args.workers,
         )
     else:
         result = brute_force(
@@ -302,7 +310,8 @@ def output_result(result: str, out: Optional[str], console: Console) -> None:
         write_text_to_file(out, result)
         console.print(f"[green]Saved to {out}[/green]")
     else:
-        console.print(result)
+        console.file.write(f"{result}\n")
+        console.file.flush()
 
 
 def interactive_mode(console: Console, accent: str) -> None:
@@ -464,11 +473,16 @@ def interactive_mode(console: Console, accent: str) -> None:
                         console.print(f"[bold red]Error:[/bold red] {exc}")
                         continue
 
-                hash_options = ["md5", "sha1", "sha256", "sha512"]
+                hash_options = [
+                    "md5", "md4", "sha1", "sha256", "sha512", "sha3_224", "sha3_256", "sha3_512",
+                    "blake2b", "blake2s", "ntlm", "mysql323", "mysql41", "bcrypt",
+                ]
                 hash_type = choose_option("Hash type", hash_options, default_index=3)
                 text, file_path = _get_interactive_input("Input source")
                 salt = ""
-                if ask_yes_no("Use salt?", default=False):
+                if hash_type == "bcrypt":
+                    salt = ask_text("Salt (or rounds)", default="12")
+                elif ask_yes_no("Use salt?", default=False):
                     salt = ask_text("Salt value")
                 salt_mode = choose_option("Salt mode", ["prefix", "suffix"], default_index=1) if salt else "prefix"
                 args = argparse.Namespace(type=hash_type, text=text or None, file=file_path, salt=salt, salt_mode=salt_mode)
@@ -480,32 +494,30 @@ def interactive_mode(console: Console, accent: str) -> None:
                     console.print(f"[bold red]Error:[/bold red] {exc}")
                     continue
 
-            crack_type = choose_option("Hash type", ["md5", "sha1", "sha256", "sha512"], default_index=1)
+            crack_type = choose_option(
+                "Hash type",
+                [
+                    "auto", "md5", "md4", "sha1", "sha256", "sha512", "sha3_224", "sha3_256", "sha3_512",
+                    "blake2b", "blake2s", "ntlm", "mysql323", "mysql41", "bcrypt",
+                ],
+                default_index=1,
+            )
             mode = choose_option("Mode", ["dict", "brute"], default_index=1)
             while True:
                 target_hash = ask_text("Target hash")
-                if not is_hex_string(target_hash):
+                if crack_type != "auto" and crack_type != "bcrypt" and not is_hex_string(target_hash) and not target_hash.startswith("*"):
                     console.print("[bold red]Error:[/bold red] Hash must be hexadecimal (0-9, a-f).")
                     continue
                 break
-            # Auto-detect hash type by length
-            detected = None
-            l = len(target_hash.strip())
-            if l == 32:
-                detected = "md5"
-            elif l == 40:
-                detected = "sha1"
-            elif l == 64:
-                detected = "sha256"
-            elif l == 128:
-                detected = "sha512"
-            if detected:
-                if ask_yes_no(f"Detected: {detected.upper()}. Use this?", default=True):
-                    crack_type = detected
+            if crack_type == "auto":
+                candidates = detect_hash_types(target_hash)
+                if not candidates:
+                    console.print("[bold red]Error:[/bold red] Unable to detect hash type.")
+                    continue
+                if len(candidates) == 1:
+                    crack_type = candidates[0]
                 else:
-                    crack_type = choose_option("Hash type", ["md5", "sha1", "sha256", "sha512"], default_index=1)
-            else:
-                crack_type = choose_option("Hash type", ["md5", "sha1", "sha256", "sha512"], default_index=1)
+                    crack_type = choose_option("Detected types", candidates, default_index=1)
             salt = ""
             if ask_yes_no("Use salt?", default=False):
                 salt = ask_text("Salt value")
@@ -514,6 +526,7 @@ def interactive_mode(console: Console, accent: str) -> None:
             if mode == "dict":
                 wordlist_choice = choose_option("Wordlist", ["use default wordlists/common.txt", "enter custom path"], default_index=1)
                 wordlist = "wordlists/common.txt" if wordlist_choice.startswith("use default") else ask_text("Wordlist path")
+                workers = ask_int("Workers", default=os.cpu_count() or 1)
                 args = argparse.Namespace(
                     type=crack_type,
                     target_hash=target_hash,
@@ -524,6 +537,7 @@ def interactive_mode(console: Console, accent: str) -> None:
                     max_len=4,
                     salt=salt,
                     salt_mode=salt_mode,
+                    workers=workers,
                 )
                 raise SystemExit(handle_crack(args, console, accent))
 
@@ -541,6 +555,7 @@ def interactive_mode(console: Console, accent: str) -> None:
                 max_len=max_len,
                 salt=salt,
                 salt_mode=salt_mode,
+                workers=1,
             )
             raise SystemExit(handle_crack(args, console, accent))
         except BackAction:
@@ -593,9 +608,19 @@ def main() -> None:
         elif args.command == "crack":
             if not args.no_banner:
                 render_banner(console, accent)
-            if not is_hex_string(args.target_hash):
+            if args.type != "auto" and args.type != "bcrypt" and not is_hex_string(args.target_hash) and not args.target_hash.startswith("*"):
                 console.print("[bold red]Error:[/bold red] Hash must be hexadecimal (0-9, a-f).")
                 raise SystemExit(2)
+            if args.type == "auto":
+                candidates = detect_hash_types(args.target_hash)
+                if not candidates:
+                    console.print("[bold red]Error:[/bold red] Unable to detect hash type.")
+                    raise SystemExit(2)
+                if len(candidates) > 1:
+                    console.print(f"[bold yellow]Multiple candidates:[/bold yellow] {', '.join(candidates)}")
+                    console.print("Use --type to select one.")
+                    raise SystemExit(2)
+                args.type = candidates[0]
             raise SystemExit(handle_crack(args, console, accent))
         else:
             parser.print_help()
