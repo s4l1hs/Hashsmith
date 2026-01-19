@@ -134,7 +134,11 @@ def _bigram_score(value: str) -> float:
 
 def _word_hit(value: str) -> bool:
     text = re.sub(r"[^a-z ]", " ", value.lower())
-    return any(word in text for word in COMMON_WORDS)
+    tokens = [token for token in text.split() if token]
+    hits = [word for word in COMMON_WORDS if word in tokens]
+    if any(len(word) >= 4 for word in hits):
+        return True
+    return len(hits) >= 2
 
 
 def _text_score(value: str) -> float:
