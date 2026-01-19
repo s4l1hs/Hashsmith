@@ -411,6 +411,9 @@ def detect_encoding_types(text: str) -> List[str]:
     # ROT13 / Caesar / Atbash / Reverse / Rail fence heuristics
     if re.fullmatch(r"[A-Za-z ]+", value) and len(value.strip()) >= 6:
         base_score = _text_score(value)
+        base_word_hit = _word_hit(value)
+        base_vowel = _vowel_ratio(value)
+        base_alpha = _alpha_ratio(value)
         candidate_scores: dict[str, float] = {}
         candidate_texts: dict[str, str] = {}
 
@@ -466,47 +469,86 @@ def detect_encoding_types(text: str) -> List[str]:
         best_text = candidate_texts.get(best_match, "")
         any_word_hit = any(_word_hit(text) for text in candidate_texts.values())
         score_delta = best_score - base_score
-        if best_match == "caesar" and score_delta >= 0.05 and len(value.strip()) > 12:
-            heuristic_results.append("caesar")
-        elif best_match in {"caesar", "rot13", "atbash"} and not any_word_hit and len(value.strip()) <= 12:
-            heuristic_results.append("vigenere")
-        elif best_match == "caesar" and (best_score - base_score) >= 0.12:
-            heuristic_results.append("caesar")
-        elif (
-            best_match in {"caesar", "rot13", "atbash"}
-            and not any_word_hit
-            and score_delta < 0.05
-            and len(value.strip()) >= 8
-        ):
-            heuristic_results.append("vigenere")
-        elif (
-            best_match == "caesar"
-            and not any_word_hit
-            and (best_caesar_score - second_caesar_score) < 0.15
-            and len(value.strip()) >= 8
-        ):
-            heuristic_results.append("vigenere")
-        elif ic_value < 0.06 and not any_word_hit and score_delta < 0.05 and len(value.strip()) >= 8:
-            heuristic_results.append("vigenere")
-        elif (
-            best_match in {"caesar", "rot13", "atbash"}
-            and not _word_hit(best_text)
-            and ic_value < 0.06
-            and best_score < 0.35
-            and len(value.strip()) >= 8
-        ):
-            heuristic_results.append("vigenere")
-        elif ic_value < 0.055 and (best_score - base_score) < 0.08 and len(value.strip()) >= 8:
-            heuristic_results.append("vigenere")
-        elif best_score >= max(0.2, base_score + 0.08):
-            heuristic_results.append(best_match)
+        allow_heuristics = (
+            (not base_word_hit and base_score < 0.18)
+            or (score_delta >= 0.15 and best_score >= 0.25)
+        )
+
+        if allow_heuristics:
+            if best_match == "caesar" and score_delta >= 0.05 and len(value.strip()) > 12:
+                heuristic_results.append("caesar")
+            elif best_match in {"caesar", "rot13", "atbash"} and not any_word_hit and len(value.strip()) <= 12:
+                if not base_word_hit and base_score < 0.18:
+                    heuristic_results.append("vigenere")
+            elif best_match == "caesar" and (best_score - base_score) >= 0.12:
+                heuristic_results.append("caesar")
+            elif (
+                best_match in {"caesar", "rot13", "atbash"}
+                and not any_word_hit
+                and score_delta < 0.05
+                and len(value.strip()) >= 8
+                and not base_word_hit
+                and base_score < 0.18
+            ):
+                heuristic_results.append("vigenere")
+            elif (
+                best_match == "caesar"
+                and not any_word_hit
+                and (best_caesar_score - second_caesar_score) < 0.15
+                and len(value.strip()) >= 8
+                and not base_word_hit
+                and base_score < 0.18
+            ):
+                heuristic_results.append("vigenere")
+            elif (
+                ic_value < 0.06
+                and not any_word_hit
+                and score_delta < 0.05
+                and len(value.strip()) >= 8
+                and not base_word_hit
+                and base_score < 0.18
+            ):
+                heuristic_results.append("vigenere")
+            elif (
+                best_match in {"caesar", "rot13", "atbash"}
+                and not _word_hit(best_text)
+                and ic_value < 0.06
+                and best_score < 0.35
+                and len(value.strip()) >= 8
+                and not base_word_hit
+                and base_score < 0.18
+            ):
+                heuristic_results.append("vigenere")
+            elif (
+                ic_value < 0.055
+                and (best_score - base_score) < 0.08
+                and len(value.strip()) >= 8
+                and not base_word_hit
+                and base_score < 0.18
+            ):
+                heuristic_results.append("vigenere")
+            elif best_match == "reverse":
+                reverse_bigram = _bigram_score(best_text)
+                if (
+                    _word_hit(best_text)
+                    or (
+                        reverse_bigram >= 0.25
+                        and _vowel_ratio(best_text) >= 0.3
+                        and base_score <= 0.1
+                        and (best_score - base_score) >= 0.12
+                    )
+                ):
+                    heuristic_results.append("reverse")
+            elif best_score >= max(0.2, base_score + 0.08):
+                if not (base_alpha >= 0.85 and base_vowel >= 0.28 and base_score >= 0.18):
+                    heuristic_results.append(best_match)
 
     # Leet (heuristic, require mixed letters+digits)
     if not _is_hex(value) and any(ch.isalpha() for ch in value) and any(ch in "013457" for ch in value):
         decoded = decode_leet_speak(value)
         original_score = _bigram_score(value)
         decoded_score = _bigram_score(decoded)
-        if decoded_score >= max(0.05, original_score + 0.02):
+        if _word_hit(decoded) or (decoded_score >= 0.12 and original_score <= 0.05):
             heuristic_results.append("leet")
 
     # XOR (single-byte key heuristic on hex)
