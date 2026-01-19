@@ -506,7 +506,10 @@ def interactive_mode(console: Console, accent: str) -> None:
             for idx, option in enumerate(options, start=1):
                 console.print(format_option(str(idx), option))
             console.print(format_option("q", "Quit"))
-            raw = ask_text("Select option", default=str(default_index)).strip().lower()
+            default_hint = f"[{accent}]\\[{default_index}][/{accent}]"
+            raw = console.input(f"Select option {default_hint}: ").strip().lower()
+            if raw == "":
+                raw = str(default_index)
             if raw == "0":
                 raise BackAction()
             maybe_exit(raw)
@@ -526,15 +529,20 @@ def interactive_mode(console: Console, accent: str) -> None:
     def ask_yes_no(label: str, default: bool = False) -> bool:
         attempts = 0
         default_str = "y" if default else "n"
+        hint = "Y/n" if default else "y/N"
+        hint_markup = f"[{accent}]\\[{hint}][/{accent}]"
         while attempts < 3:
-            value = ask_text(f"{label} (y/n)", default=default_str)
+            value = console.input(f"{label} {hint_markup}: ")
+            if value.strip() == "":
+                value = default_str
+            maybe_exit(value)
             normalized = value.strip().lower()
             if normalized in {"y", "yes"}:
                 return True
             if normalized in {"n", "no"}:
                 return False
             attempts += 1
-            console.print("[red]Invalid input.[/red] Use y/n (or yes/no).")
+            console.print("[red]Invalid input.[/red] Use yes/no.")
         console.print("[red]Too many invalid attempts. Exiting.[/red]")
         raise SystemExit(2)
 
