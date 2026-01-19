@@ -93,6 +93,100 @@ def _dictionary_worker(words: List[str], target_hash: str, algorithm: str, salt:
     return None, attempts
 
 
+def _bruteforce_worker(
+    prefixes: List[str],
+    target_hash: str,
+    algorithm: str,
+    charset: str,
+    length: int,
+    salt: str,
+    salt_mode: str,
+) -> Tuple[Optional[str], int]:
+    attempts = 0
+    scrypt_params = None
+    if algorithm == "scrypt":
+        scrypt_params = _parse_scrypt_hash(target_hash)
+    mssql_salt = None
+    if algorithm in {"mssql2005", "mssql2012"}:
+        mssql_salt = _parse_mssql_2005_salt(target_hash)
+    hasher = None
+    verify_mismatch = None
+    invalid_hash = None
+    if algorithm == "argon2":
+        try:
+            from argon2 import PasswordHasher  # type: ignore
+            from argon2.exceptions import VerifyMismatchError, InvalidHash  # type: ignore
+        except Exception:  # pragma: no cover
+            return None, attempts
+        hasher = PasswordHasher()
+        verify_mismatch = VerifyMismatchError
+        invalid_hash = InvalidHash
+
+    for prefix in prefixes:
+        remaining = length - len(prefix)
+        if remaining < 0:
+            continue
+        if remaining == 0:
+            attempts += 1
+            candidate = prefix
+            if algorithm == "bcrypt":
+                if bcrypt is None:
+                    continue
+                if bcrypt.checkpw(candidate.encode("utf-8"), target_hash.encode("utf-8")):
+                    return candidate, attempts
+            elif algorithm == "argon2":
+                try:
+                    hasher.verify(target_hash, candidate)
+                    return candidate, attempts
+                except (verify_mismatch, invalid_hash):
+                    continue
+                except Exception:
+                    continue
+            elif algorithm == "scrypt":
+                n, r, p, salt_bytes, digest = scrypt_params
+                value = hashlib.scrypt(candidate.encode("utf-8"), salt=salt_bytes, n=n, r=r, p=p, dklen=len(digest))
+                if value == digest:
+                    return candidate, attempts
+            elif algorithm in {"mssql2005", "mssql2012"}:
+                digest = hashlib.sha1(mssql_salt + candidate.encode("utf-16le")).hexdigest().upper()
+                if target_hash.lower().startswith("0x0100") and target_hash[14:].upper() == digest:
+                    return candidate, attempts
+            else:
+                if hash_text(candidate, algorithm, salt, salt_mode) == target_hash:
+                    return candidate, attempts
+            continue
+
+        for combo in itertools.product(charset, repeat=remaining):
+            attempts += 1
+            candidate = prefix + "".join(combo)
+            if algorithm == "bcrypt":
+                if bcrypt is None:
+                    continue
+                if bcrypt.checkpw(candidate.encode("utf-8"), target_hash.encode("utf-8")):
+                    return candidate, attempts
+            elif algorithm == "argon2":
+                try:
+                    hasher.verify(target_hash, candidate)
+                    return candidate, attempts
+                except (verify_mismatch, invalid_hash):
+                    continue
+                except Exception:
+                    continue
+            elif algorithm == "scrypt":
+                n, r, p, salt_bytes, digest = scrypt_params
+                value = hashlib.scrypt(candidate.encode("utf-8"), salt=salt_bytes, n=n, r=r, p=p, dklen=len(digest))
+                if value == digest:
+                    return candidate, attempts
+            elif algorithm in {"mssql2005", "mssql2012"}:
+                digest = hashlib.sha1(mssql_salt + candidate.encode("utf-16le")).hexdigest().upper()
+                if target_hash.lower().startswith("0x0100") and target_hash[14:].upper() == digest:
+                    return candidate, attempts
+            else:
+                if hash_text(candidate, algorithm, salt, salt_mode) == target_hash:
+                    return candidate, attempts
+    return None, attempts
+
+
 def dictionary_attack(
     target_hash: str,
     algorithm: str,
@@ -198,11 +292,14 @@ def brute_force(
     max_len: int = 4,
     salt: str = "",
     salt_mode: str = "prefix",
+    workers: int = 1,
     progress_callback: Optional[Callable[[int], None]] = None,
 ) -> CrackResult:
     start = time.perf_counter()
     counter = RateCounter()
     attempts = 0
+    if algorithm == "bcrypt" and bcrypt is None:
+        raise ValueError("bcrypt library is required for bcrypt cracking")
     if algorithm == "argon2":
         try:
             from argon2 import PasswordHasher  # type: ignore
@@ -221,47 +318,95 @@ def brute_force(
     if algorithm in {"mssql2005", "mssql2012"}:
         mssql_salt = _parse_mssql_2005_salt(target_hash)
 
-    for length in range(min_len, max_len + 1):
-        for combo in itertools.product(charset, repeat=length):
-            attempts += 1
-            if progress_callback:
-                progress_callback(1)
-            candidate = "".join(combo)
-            if algorithm == "bcrypt":
-                if bcrypt is None:
-                    raise ValueError("bcrypt library is required for bcrypt cracking")
-                if bcrypt.checkpw(candidate.encode("utf-8"), target_hash.encode("utf-8")):
+    if workers > 1:
+        prefixes = list(charset)
+        futures = []
+        with ProcessPoolExecutor(max_workers=workers) as executor:
+            for length in range(min_len, max_len + 1):
+                batch: List[str] = []
+                for prefix in prefixes:
+                    batch.append(prefix)
+                    if len(batch) >= 50:
+                        futures.append(
+                            executor.submit(
+                                _bruteforce_worker,
+                                batch,
+                                target_hash,
+                                algorithm,
+                                charset,
+                                length,
+                                salt,
+                                salt_mode,
+                            )
+                        )
+                        batch = []
+                if batch:
+                    futures.append(
+                        executor.submit(
+                            _bruteforce_worker,
+                            batch,
+                            target_hash,
+                            algorithm,
+                            charset,
+                            length,
+                            salt,
+                            salt_mode,
+                        )
+                    )
+
+            for future in as_completed(futures):
+                found, count = future.result()
+                attempts += count
+                if progress_callback:
+                    progress_callback(count)
+                if found:
+                    elapsed = time.perf_counter() - start
+                    rate = counter.rate(attempts)
+                    return CrackResult(True, found, attempts, elapsed, rate)
+                if attempts % 1000 == 0:
+                    counter.rate(attempts)
+    else:
+        for length in range(min_len, max_len + 1):
+            for combo in itertools.product(charset, repeat=length):
+                attempts += 1
+                if progress_callback:
+                    progress_callback(1)
+                candidate = "".join(combo)
+                if algorithm == "bcrypt":
+                    if bcrypt is None:
+                        raise ValueError("bcrypt library is required for bcrypt cracking")
+                    if bcrypt.checkpw(candidate.encode("utf-8"), target_hash.encode("utf-8")):
+                        elapsed = time.perf_counter() - start
+                        rate = counter.rate(attempts)
+                        return CrackResult(True, candidate, attempts, elapsed, rate)
+                elif algorithm == "argon2":
+                    hasher, verify_mismatch, invalid_hash = argon2_verify
+                    try:
+                        hasher.verify(target_hash, candidate)
+                        elapsed = time.perf_counter() - start
+                        rate = counter.rate(attempts)
+                        return CrackResult(True, candidate, attempts, elapsed, rate)
+                    except (verify_mismatch, invalid_hash):
+                        pass
+                elif algorithm == "scrypt":
+                    n, r, p, salt_bytes, digest = scrypt_params
+                    value = hashlib.scrypt(candidate.encode("utf-8"), salt=salt_bytes, n=n, r=r, p=p, dklen=len(digest))
+                    if value == digest:
+                        elapsed = time.perf_counter() - start
+                        rate = counter.rate(attempts)
+                        return CrackResult(True, candidate, attempts, elapsed, rate)
+                elif algorithm in {"mssql2005", "mssql2012"}:
+                    digest = hashlib.sha1(mssql_salt + candidate.encode("utf-16le")).hexdigest().upper()
+                    if target_hash.lower().startswith("0x0100") and target_hash[14:].upper() == digest:
+                        elapsed = time.perf_counter() - start
+                        rate = counter.rate(attempts)
+                        return CrackResult(True, candidate, attempts, elapsed, rate)
+                elif hash_text(candidate, algorithm, salt, salt_mode) == target_hash:
                     elapsed = time.perf_counter() - start
                     rate = counter.rate(attempts)
                     return CrackResult(True, candidate, attempts, elapsed, rate)
-            elif algorithm == "argon2":
-                hasher, verify_mismatch, invalid_hash = argon2_verify
-                try:
-                    hasher.verify(target_hash, candidate)
-                    elapsed = time.perf_counter() - start
-                    rate = counter.rate(attempts)
-                    return CrackResult(True, candidate, attempts, elapsed, rate)
-                except (verify_mismatch, invalid_hash):
-                    pass
-            elif algorithm == "scrypt":
-                n, r, p, salt_bytes, digest = scrypt_params
-                value = hashlib.scrypt(candidate.encode("utf-8"), salt=salt_bytes, n=n, r=r, p=p, dklen=len(digest))
-                if value == digest:
-                    elapsed = time.perf_counter() - start
-                    rate = counter.rate(attempts)
-                    return CrackResult(True, candidate, attempts, elapsed, rate)
-            elif algorithm in {"mssql2005", "mssql2012"}:
-                digest = hashlib.sha1(mssql_salt + candidate.encode("utf-16le")).hexdigest().upper()
-                if target_hash.lower().startswith("0x0100") and target_hash[14:].upper() == digest:
-                    elapsed = time.perf_counter() - start
-                    rate = counter.rate(attempts)
-                    return CrackResult(True, candidate, attempts, elapsed, rate)
-            elif hash_text(candidate, algorithm, salt, salt_mode) == target_hash:
-                elapsed = time.perf_counter() - start
-                rate = counter.rate(attempts)
-                return CrackResult(True, candidate, attempts, elapsed, rate)
-            if attempts % 1000 == 0:
-                counter.rate(attempts)
+                if attempts % 1000 == 0:
+                    counter.rate(attempts)
 
     elapsed = time.perf_counter() - start
     rate = counter.rate(attempts)

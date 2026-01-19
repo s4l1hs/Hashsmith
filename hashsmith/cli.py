@@ -261,7 +261,7 @@ def build_parser() -> argparse.ArgumentParser:
     crack_params.add_argument("-x", "--max-len", type=int, default=4)
     crack_params.add_argument("-s", "--salt", default="")
     crack_params.add_argument("-S", "--salt-mode", default="prefix", choices=["prefix", "suffix"])
-    crack_params.add_argument("-p", "--workers", type=int, default=0, help="Parallel workers for dictionary attack (0=auto)")
+    crack_params.add_argument("-p", "--workers", type=int, default=0, help="Parallel workers for cracking (0=auto)")
 
     interactive_parser = subparsers.add_parser(
         "interactive",
@@ -519,6 +519,10 @@ def handle_crack(args: argparse.Namespace, console: Console, accent: str = "cyan
             progress.stop()
             raise
     else:
+        if args.workers < 1:
+            args.workers = os.cpu_count() or 1
+        if args.type == "bcrypt" and args.workers > 1:
+            console.print("[yellow]bcrypt is CPU-expensive; multi-processing may not scale well.[/yellow]")
         total = 0
         charset_len = len(args.charset)
         for length in range(args.min_len, args.max_len + 1):
@@ -552,6 +556,7 @@ def handle_crack(args: argparse.Namespace, console: Console, accent: str = "cyan
                         max_len=args.max_len,
                         salt=args.salt,
                         salt_mode=args.salt_mode,
+                        workers=args.workers,
                         progress_callback=progress_callback,
                     )
                 finally:
