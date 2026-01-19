@@ -20,15 +20,9 @@ Hashsmith is a modular, terminal-first toolkit for encoding, decoding, hashing, 
 
 ## Installation 🔐
 
-**From source**
-```bash
-pip install -r requirements.txt
-```
-
-**Run as module**
-```bash
-python -m hashsmith --help
-```
+- 🍺 Homebrew: `brew tap s4l1hs/hashsmith && brew install hashsmith`
+- 📦 PyPI: `pip install hashsmith-cli`
+- ⚡ npm: `npm install -g hashsmith-cli`
 
 ## Quick Start ⚡
 ```bash
