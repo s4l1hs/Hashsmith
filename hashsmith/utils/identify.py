@@ -137,6 +137,22 @@ def _word_hit(value: str) -> bool:
     return any(word in text for word in COMMON_WORDS)
 
 
+def _text_score(value: str) -> float:
+    return _bigram_score(value) + (0.6 if _word_hit(value) else 0.0) + (_vowel_ratio(value) * 0.4)
+
+
+def _index_of_coincidence(value: str) -> float:
+    letters = [ch.lower() for ch in value if ch.isalpha()]
+    n = len(letters)
+    if n < 2:
+        return 0.0
+    counts = {}
+    for ch in letters:
+        counts[ch] = counts.get(ch, 0) + 1
+    numerator = sum(count * (count - 1) for count in counts.values())
+    return numerator / (n * (n - 1))
+
+
 def _best_shift_score(value: str) -> Tuple[int, float, float]:
     original_score = _bigram_score(value)
     best_shift = 0
@@ -148,6 +164,19 @@ def _best_shift_score(value: str) -> Tuple[int, float, float]:
             best_score = score
             best_shift = shift
     return best_shift, original_score, best_score
+
+
+def _best_shift_vowel_ratio(value: str) -> Tuple[int, float, float]:
+    original_ratio = _vowel_ratio(value)
+    best_shift = 0
+    best_ratio = 0.0
+    for shift in range(1, 26):
+        decoded = decode_caesar(value, shift)
+        ratio = _vowel_ratio(decoded)
+        if ratio > best_ratio:
+            best_ratio = ratio
+            best_shift = shift
+    return best_shift, original_ratio, best_ratio
 
 
 def _try_single_byte_xor(hex_text: str) -> Tuple[float, float]:
@@ -331,34 +360,41 @@ def detect_encoding_types(text: str) -> List[str]:
 
     # ROT13 / Caesar / Atbash / Reverse / Rail fence heuristics
     if re.fullmatch(r"[A-Za-z ]+", value) and len(value.strip()) >= 6:
-        original_ratio = _vowel_ratio(value)
-        original_score = _bigram_score(value)
+        base_score = _text_score(value)
+        candidate_scores: dict[str, float] = {}
+        candidate_texts: dict[str, str] = {}
 
         rot13_decoded = decode_rot13(value)
-        rot13_ratio = _vowel_ratio(rot13_decoded)
-        rot13_score = _bigram_score(rot13_decoded)
-        if (rot13_ratio >= 0.3 and rot13_ratio - original_ratio >= 0.15) and _word_hit(rot13_decoded):
-            heuristic_results.append("rot13")
+        candidate_scores["rot13"] = _text_score(rot13_decoded)
+        candidate_texts["rot13"] = rot13_decoded
 
-        shift, original_score, best_score = _best_shift_score(value)
-        caesar_decoded = decode_caesar(value, shift) if shift else value
-        caesar_ratio = _vowel_ratio(caesar_decoded)
-        if shift not in {0, 13} and (
-            (caesar_ratio >= 0.3 and caesar_ratio - original_ratio >= 0.15)
-            and _word_hit(caesar_decoded)
-        ):
-            heuristic_results.append("caesar")
+        best_shift = 0
+        best_caesar_score = 0.0
+        second_caesar_score = 0.0
+        best_caesar_text = value
+        for shift in range(1, 26):
+            if shift == 13:
+                continue
+            decoded = decode_caesar(value, shift)
+            score = _text_score(decoded)
+            if score > best_caesar_score:
+                second_caesar_score = best_caesar_score
+                best_caesar_score = score
+                best_shift = shift
+                best_caesar_text = decoded
+            elif score > second_caesar_score:
+                second_caesar_score = score
+        if best_shift:
+            candidate_scores["caesar"] = best_caesar_score
+            candidate_texts["caesar"] = best_caesar_text
 
         atbash_decoded = decode_atbash(value)
-        atbash_ratio = _vowel_ratio(atbash_decoded)
-        atbash_score = _bigram_score(atbash_decoded)
-        if (atbash_ratio >= 0.3 and atbash_ratio - original_ratio >= 0.15) and _word_hit(atbash_decoded):
-            heuristic_results.append("atbash")
+        candidate_scores["atbash"] = _text_score(atbash_decoded)
+        candidate_texts["atbash"] = atbash_decoded
 
         reverse_decoded = decode_reverse(value)
-        reverse_score = _bigram_score(reverse_decoded)
-        if reverse_score >= max(0.05, original_score + 0.02) and _word_hit(reverse_decoded):
-            heuristic_results.append("reverse")
+        candidate_scores["reverse"] = _text_score(reverse_decoded)
+        candidate_texts["reverse"] = reverse_decoded
 
         best_rf_score = 0.0
         best_rf_text = ""
@@ -367,12 +403,46 @@ def detect_encoding_types(text: str) -> List[str]:
                 decoded = decode_rail_fence(value, rails)
             except Exception:
                 continue
-            score = _bigram_score(decoded)
+            score = _text_score(decoded)
             if score > best_rf_score:
                 best_rf_score = score
                 best_rf_text = decoded
-        if best_rf_score >= max(0.05, original_score + 0.02):
-            heuristic_results.append("railfence")
+        if best_rf_text:
+            candidate_scores["railfence"] = best_rf_score
+            candidate_texts["railfence"] = best_rf_text
+
+        best_match, best_score = max(candidate_scores.items(), key=lambda item: item[1])
+        ic_value = _index_of_coincidence(value)
+        best_text = candidate_texts.get(best_match, "")
+        any_word_hit = any(_word_hit(text) for text in candidate_texts.values())
+        if (
+            best_match in {"caesar", "rot13", "atbash"}
+            and not any_word_hit
+            and best_score < 0.3
+            and len(value.strip()) >= 8
+        ):
+            heuristic_results.append("vigenere")
+        elif (
+            best_match == "caesar"
+            and not any_word_hit
+            and (best_caesar_score - second_caesar_score) < 0.15
+            and len(value.strip()) >= 8
+        ):
+            heuristic_results.append("vigenere")
+        elif ic_value < 0.06 and not any_word_hit and len(value.strip()) >= 8:
+            heuristic_results.append("vigenere")
+        elif (
+            best_match in {"caesar", "rot13", "atbash"}
+            and not _word_hit(best_text)
+            and ic_value < 0.06
+            and best_score < 0.35
+            and len(value.strip()) >= 8
+        ):
+            heuristic_results.append("vigenere")
+        elif ic_value < 0.055 and (best_score - base_score) < 0.08 and len(value.strip()) >= 8:
+            heuristic_results.append("vigenere")
+        elif best_score >= max(0.2, base_score + 0.08):
+            heuristic_results.append(best_match)
 
     # Leet (heuristic, require mixed letters+digits)
     if any(ch.isalpha() for ch in value) and any(ch in "013457" for ch in value):
@@ -389,11 +459,6 @@ def detect_encoding_types(text: str) -> List[str]:
             raw_text_score = _bigram_score(hex_bytes.decode("utf-8", errors="ignore"))
             if xor_score >= 0.05 and xor_score - raw_text_score >= 0.03:
                 heuristic_results.append("xor")
-
-    # Vigenere (heuristic: alphabetic, low bigram score, not caught by others)
-    if re.fullmatch(r"[A-Za-z ]+", value) and len(value.strip()) >= 8:
-        if _bigram_score(value) <= 0.02 and _vowel_ratio(value) <= 0.25 and not heuristic_results:
-            heuristic_results.append("vigenere")
 
     return list(dict.fromkeys(heuristic_results))
 
