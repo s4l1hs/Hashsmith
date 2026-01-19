@@ -70,6 +70,7 @@ from .algorithms.encoding import (
 )
 from .algorithms.hashing import hash_text
 from .utils.banner import render_banner
+from .utils.clipboard import copy_to_clipboard
 from .utils.io import read_text_from_file, resolve_input, write_text_to_file
 from .utils.wordlist import iter_wordlist
 from .utils.hashdetect import detect_hash_types
@@ -109,6 +110,7 @@ def build_parser() -> argparse.ArgumentParser:
     encode_parser.add_argument("--key", help="Key for Vigenere/XOR")
     encode_parser.add_argument("--rails", type=int, default=2, help="Rails for Rail Fence")
     encode_parser.add_argument("--out", help="Write output to file")
+    encode_parser.add_argument("--copy", action="store_true", help="Copy output to clipboard")
 
     decode_parser = subparsers.add_parser("decode", help="Decode text")
     decode_parser.add_argument("--type", required=True, choices=[
@@ -122,6 +124,7 @@ def build_parser() -> argparse.ArgumentParser:
     decode_parser.add_argument("--key", help="Key for Vigenere/XOR")
     decode_parser.add_argument("--rails", type=int, default=2, help="Rails for Rail Fence")
     decode_parser.add_argument("--out", help="Write output to file")
+    decode_parser.add_argument("--copy", action="store_true", help="Copy output to clipboard")
 
     hash_parser = subparsers.add_parser("hash", help="Hash text")
     hash_parser.add_argument("--type", required=True, choices=[
@@ -135,6 +138,7 @@ def build_parser() -> argparse.ArgumentParser:
     hash_parser.add_argument("--salt-mode", default="prefix", choices=["prefix", "suffix"])
     hash_parser.add_argument("--out-encoding", default="hex", choices=["hex", "base58"], help="Output encoding for hex hashes")
     hash_parser.add_argument("--out", help="Write output to file")
+    hash_parser.add_argument("--copy", action="store_true", help="Copy output to clipboard")
 
     crack_parser = subparsers.add_parser("crack", help="Crack hash")
     crack_parser.add_argument("--type", required=True, choices=[
@@ -151,6 +155,7 @@ def build_parser() -> argparse.ArgumentParser:
     crack_parser.add_argument("--salt", default="")
     crack_parser.add_argument("--salt-mode", default="prefix", choices=["prefix", "suffix"])
     crack_parser.add_argument("--workers", type=int, default=0, help="Parallel workers for dictionary attack (0=auto)")
+    crack_parser.add_argument("--copy", action="store_true", help="Copy to clipboard")
 
     subparsers.add_parser("interactive", help="Guided interactive mode")
 
@@ -429,6 +434,11 @@ def handle_crack(args: argparse.Namespace, console: Console, accent: str = "cyan
 
     if result.found:
         console.print(f"[green]Found:[/green] {result.password}")
+        if getattr(args, "copy", False):
+            if copy_to_clipboard(result.password or ""):
+                console.print("[green]Copied to clipboard[/green]")
+            else:
+                console.print("[yellow]Unable to copy to clipboard[/yellow]")
     else:
         console.print("[yellow]Not found[/yellow]")
 
@@ -441,13 +451,18 @@ def handle_crack(args: argparse.Namespace, console: Console, accent: str = "cyan
     return 0
 
 
-def output_result(result: str, out: Optional[str], console: Console) -> None:
+def output_result(result: str, out: Optional[str], console: Console, copy: bool = False) -> None:
     if out:
         write_text_to_file(out, result)
         console.print(f"[green]Saved to {out}[/green]")
     else:
         console.file.write(f"{result}\n")
         console.file.flush()
+    if copy:
+        if copy_to_clipboard(result):
+            console.print("[green]Copied to clipboard[/green]")
+        else:
+            console.print("[yellow]Unable to copy to clipboard[/yellow]")
 
 
 def interactive_mode(console: Console, accent: str) -> None:
@@ -539,11 +554,13 @@ def interactive_mode(console: Console, accent: str) -> None:
                     continue
                 return content, None
 
-    def _get_interactive_output() -> Optional[str]:
+    def _get_interactive_output() -> tuple[Optional[str], bool]:
+        copy_output = ask_yes_no("Copy output to clipboard?", default=True)
         if ask_yes_no("Save output to file?", default=False):
             out_choice = choose_option("Output path", ["use default output.txt", "enter custom path"], default_index=1)
-            return "output.txt" if out_choice.startswith("use default") else ask_text("Output file path")
-        return None
+            out_path = "output.txt" if out_choice.startswith("use default") else ask_text("Output file path")
+            return out_path, copy_output
+        return None, copy_output
 
     actions = ["encode", "decode", "hash", "crack", "set-theme"]
     while True:
@@ -559,7 +576,7 @@ def interactive_mode(console: Console, accent: str) -> None:
                 continue
 
             if action in {"encode", "decode", "hash"}:
-                out_path = _get_interactive_output()
+                out_path, copy_output = _get_interactive_output()
 
                 if action == "encode":
                     enc_options = [
@@ -579,7 +596,7 @@ def interactive_mode(console: Console, accent: str) -> None:
                     args = argparse.Namespace(type=enc_type, text=text or None, file=file_path, shift=shift, key=key, rails=rails)
                     try:
                         result = handle_encode(args, console)
-                        output_result(result, out_path, console)
+                        output_result(result, out_path, console, copy=copy_output)
                         return
                     except ValueError as exc:
                         console.print(f"[bold red]Error:[/bold red] {exc}")
@@ -603,7 +620,7 @@ def interactive_mode(console: Console, accent: str) -> None:
                     args = argparse.Namespace(type=dec_type, text=text or None, file=file_path, shift=shift, key=key, rails=rails)
                     try:
                         result = handle_decode(args, console)
-                        output_result(result, out_path, console)
+                        output_result(result, out_path, console, copy=copy_output)
                         return
                     except ValueError as exc:
                         console.print(f"[bold red]Error:[/bold red] {exc}")
@@ -635,7 +652,7 @@ def interactive_mode(console: Console, accent: str) -> None:
                 )
                 try:
                     result = handle_hash(args, console)
-                    output_result(result, out_path, console)
+                    output_result(result, out_path, console, copy=copy_output)
                     return
                 except ValueError as exc:
                     console.print(f"[bold red]Error:[/bold red] {exc}")
@@ -675,6 +692,7 @@ def interactive_mode(console: Console, accent: str) -> None:
                 wordlist_choice = choose_option("Wordlist", ["use default wordlists/common.txt", "enter custom path"], default_index=1)
                 wordlist = "wordlists/common.txt" if wordlist_choice.startswith("use default") else ask_text("Wordlist path")
                 workers = ask_int("Workers", default=os.cpu_count() or 1)
+                copy_output = ask_yes_no("Copy cracked password to clipboard?", default=True)
                 args = argparse.Namespace(
                     type=crack_type,
                     target_hash=target_hash,
@@ -686,6 +704,7 @@ def interactive_mode(console: Console, accent: str) -> None:
                     salt=salt,
                     salt_mode=salt_mode,
                     workers=workers,
+                    copy=copy_output,
                 )
                 raise SystemExit(handle_crack(args, console, accent))
 
@@ -693,6 +712,7 @@ def interactive_mode(console: Console, accent: str) -> None:
             charset = "abcdefghijklmnopqrstuvwxyz0123456789" if charset_choice.startswith("use default") else ask_text("Charset")
             min_len = ask_int("Min length", default=1)
             max_len = ask_int("Max length", default=4)
+            copy_output = ask_yes_no("Copy cracked password to clipboard?", default=True)
             args = argparse.Namespace(
                 type=crack_type,
                 target_hash=target_hash,
@@ -704,6 +724,7 @@ def interactive_mode(console: Console, accent: str) -> None:
                 salt=salt,
                 salt_mode=salt_mode,
                 workers=1,
+                copy=copy_output,
             )
             raise SystemExit(handle_crack(args, console, accent))
         except BackAction:
@@ -731,7 +752,7 @@ def main() -> None:
                 render_banner(console, accent)
             try:
                 result = handle_encode(args, console)
-                output_result(result, args.out, console)
+                output_result(result, args.out, console, copy=args.copy)
             except ValueError as exc:
                 console.print(f"[bold red]Error:[/bold red] {exc}")
                 raise SystemExit(2)
@@ -740,7 +761,7 @@ def main() -> None:
                 render_banner(console, accent)
             try:
                 result = handle_decode(args, console)
-                output_result(result, args.out, console)
+                output_result(result, args.out, console, copy=args.copy)
             except ValueError as exc:
                 console.print(f"[bold red]Error:[/bold red] {exc}")
                 raise SystemExit(2)
@@ -749,7 +770,7 @@ def main() -> None:
                 render_banner(console, accent)
             try:
                 result = handle_hash(args, console)
-                output_result(result, args.out, console)
+                output_result(result, args.out, console, copy=args.copy)
             except ValueError as exc:
                 console.print(f"[bold red]Error:[/bold red] {exc}")
                 raise SystemExit(2)

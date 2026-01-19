@@ -27,24 +27,28 @@ python -m hashsmith --help
 ```
 python -m hashsmith encode --type base64 --text "hello"
 python -m hashsmith encode --type caesar --shift 5 --file input.txt --out output.txt
+python -m hashsmith encode --type hex --text "hello" --copy
 ```
 
 ### Decode
 ```
 python -m hashsmith decode --type base64 --text "aGVsbG8="
 python -m hashsmith decode --type morse --text ".... . .-.. .-.. ---"
+python -m hashsmith decode --type hex --text "68656c6c6f" --copy
 ```
 
 ### Hash
 ```
 python -m hashsmith hash --type sha256 --text "hello"
 python -m hashsmith hash --type md5 --text "secret" --salt "pepper" --salt-mode suffix
+python -m hashsmith hash --type sha256 --text "hello" --copy
 ```
 
 ### Crack
 ```
 python -m hashsmith crack --type md5 --hash 5f4dcc3b5aa765d61d8327deb882cf99 --mode dict --wordlist wordlists/common.txt
 python -m hashsmith crack --type sha1 --hash 2aae6c35c94fcfb415dbe95f408b9ce91ee846ed --mode brute --min-len 1 --max-len 4
+python -m hashsmith crack --type md5 --hash 5f4dcc3b5aa765d61d8327deb882cf99 --mode dict --wordlist wordlists/common.txt --copy
 ```
 
 ## Notes
