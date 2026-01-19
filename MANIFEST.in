@@ -1,0 +1,2 @@
+prune wordlists
+recursive-exclude wordlists *
