@@ -1,4 +1,199 @@
+```
+ _   _           _     ____            _ _   _
+| | | | __ _ ___| |__ / ___| _ __ ___ (_) |_| |__
+| |_| |/ _` / __| '_ \\___ \| '_ ` _ \| | __| '_ \
+|  _  | (_| \__ \ | | |___) | | | | | | | |_| | | |
+|_| |_|\__,_|___/_| |_|____/|_| |_| |_|_|\__|_| |_|
+```
+
 # Hashsmith
+
+Hashsmith is a modular, terminal-first toolkit for encoding, decoding, hashing, cracking, and identification. It’s designed for security-focused workflows, quick experiments, and automation in scripts or pipelines.
+
+## Highlights ⚡
+- Clean CLI with guided interactive mode
+- Extensive encoding/decoding support (base* formats, morse, url, classical ciphers, and more)
+- Modern hash support (MD5/SHA/NTLM/Bcrypt/Argon2/Scrypt, etc.)
+- Identify mode for best-guess detection of encoding and hash types
+- File input/output and clipboard copy support
+- Themed UI with Rich
+
+## Installation 🔐
+
+**From source**
+```bash
+pip install -r requirements.txt
+```
+
+**Run as module**
+```bash
+python -m hashsmith --help
+```
+
+## Quick Start ⚡
+```bash
+hashsmith encode -t base64 -i "hello"
+hashsmith decode -t base64 -i "aGVsbG8="
+hashsmith hash -t sha256 -i "secret" -c
+hashsmith identify -i "aGVsbG8="
+```
+
+## Global Options 🛡️
+- `-N`, `--no-banner`: Disable banner
+- `-T`, `--theme`: Accent color (cyan, green, magenta, blue, yellow, red, white)
+- `-A`, `--help-all`: Show help for all commands
+- `-id`, `--identify`: Shortcut for identify (use with `-i/-f`)
+
+## Common Input/Output Options 🧬
+These options are shared across commands that accept input and output:
+- `-i`, `--text`: Text input
+- `-f`, `--file`: Read input from file
+- `-o`, `--out`: Write output to file
+- `-c`, `--copy`: Copy output to clipboard
+
+## Commands 🛡️
+
+### 1) Encode
+Encode text with a selected algorithm.
+
+**Usage**
+```bash
+hashsmith encode -t <type> [-i <text> | -f <file>] [-o <file>] [-c]
+```
+
+**Examples**
+```bash
+hashsmith encode -t base64 -i "hello"
+hashsmith encode -t caesar -s 5 -f input.txt -o output.txt
+hashsmith encode -t hex -i "hello" -c
+```
+
+---
+
+### 2) Decode
+Decode text with a selected algorithm.
+
+**Usage**
+```bash
+hashsmith decode -t <type> [-i <text> | -f <file>] [-o <file>] [-c]
+```
+
+**Examples**
+```bash
+hashsmith decode -t base64 -i "aGVsbG8="
+hashsmith decode -t morse -i ".... . .-.. .-.. ---"
+hashsmith decode -t hex -i "68656c6c6f" -c
+```
+
+---
+
+### 3) Hash
+Hash text using a selected algorithm.
+
+**Usage**
+```bash
+hashsmith hash -t <type> [-i <text> | -f <file>] [--salt <s>] [--salt-mode prefix|suffix] [-o <file>] [-c]
+```
+
+**Examples**
+```bash
+hashsmith hash -t sha256 -i "hello"
+hashsmith hash -t md5 -i "secret" -s "pepper" -S suffix
+hashsmith hash -t sha256 -i "hello" -c
+```
+
+---
+
+### 4) Crack
+Crack hashes using dictionary or brute-force attacks.
+
+**Usage**
+```bash
+hashsmith crack -t <type|auto> -H <hash> -M <dict|brute> [options]
+```
+
+**Examples**
+```bash
+hashsmith crack -t md5 -H 5f4dcc3b5aa765d61d8327deb882cf99 -M dict -w wordlists/common.txt
+hashsmith crack -t sha1 -H 2aae6c35c94fcfb415dbe95f408b9ce91ee846ed -M brute -n 1 -x 4
+hashsmith crack -t md5 -H 5f4dcc3b5aa765d61d8327deb882cf99 -M dict -w wordlists/common.txt -c
+```
+
+---
+
+### 5) Identify
+Detect probable encoding and hash types. Prioritizes reliable results and avoids false positives for raw text.
+
+**Usage**
+```bash
+hashsmith identify -i <text>
+hashsmith identify -f <file>
+hashsmith -id -i <text>
+```
+
+**Examples**
+```bash
+hashsmith identify -i "aGVsbG8="
+hashsmith identify -i 5f4dcc3b5aa765d61d8327deb882cf99
+hashsmith -id -i "aGVsbG8="
+```
+
+---
+
+### 6) Interactive Mode
+Guided prompt flow for encoding/decoding/hashing/cracking/identify.
+
+**Usage**
+```bash
+hashsmith
+hashsmith interactive
+```
+
+## Algorithms 🔐
+
+### Hashing Algorithms
+| Category | Algorithms |
+| --- | --- |
+| Cryptographic | md5, md4, sha1, sha224, sha256, sha384, sha512, sha3_224, sha3_256, sha3_512 |
+| Modern/Alt | blake2b, blake2s, ntlm, mysql323, mysql41 |
+| Password | bcrypt, argon2, scrypt, mssql2000, mssql2005, mssql2012, postgres |
+
+### Encoding/Decoding Algorithms
+| Category | Algorithms |
+| --- | --- |
+| Base Encodings | base64, base64url, base32, base85, base58 |
+| Numeric | hex, binary, decimal, octal |
+| Text/URL | morse, url, unicode |
+| Ciphers | caesar, rot13, vigenere, xor, atbash, baconian, leet, reverse, railfence, polybius |
+| Esoteric | brainf*ck |
+
+### Cracking Modes
+| Mode | Description |
+| --- | --- |
+| dict | Dictionary attack using a wordlist |
+| brute | Brute-force with a chosen charset and length range |
+
+## Clipboard Support 🔐
+When `-c/--copy` is set, output is copied to the clipboard using platform-native tools:
+- macOS: `pbcopy`
+- Windows: `clip`
+- Linux: `xclip`, `xsel`, or `wl-copy`
+
+## Themes 🛡️
+Set the accent color globally:
+```bash
+hashsmith -T magenta
+```
+
+## Troubleshooting 🧬
+- If hashing output in `base58` fails, ensure the hash is hex-based.
+- For dictionary cracking, validate your wordlist path.
+
+## Security Notice 🛡️
+Hashsmith is intended for educational and authorized security testing only. You are responsible for compliance with applicable laws.
+
+## License
+See [LICENSE](LICENSE).
 Hashsmith is a modular, terminal-based Swiss Army knife for encoding, decoding, hashing, and password cracking. Built for security enthusiasts 🛠️🔐
 
 ## Features
