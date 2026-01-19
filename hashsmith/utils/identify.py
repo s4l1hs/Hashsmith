@@ -114,11 +114,29 @@ def _vowel_ratio(value: str) -> float:
     return vowels / len(letters)
 
 
+def _alpha_count(value: str) -> int:
+    return sum(1 for ch in value if ch.isalpha())
+
+
+def _alpha_ratio(value: str) -> float:
+    if not value:
+        return 0.0
+    return _alpha_count(value) / len(value)
+
+
 def _printable_ratio(value: bytes) -> float:
     if not value:
         return 0.0
     printable = sum(1 for ch in value if chr(ch) in string.printable)
     return printable / len(value)
+
+
+def _alnum_space_ratio(value: bytes) -> float:
+    if not value:
+        return 0.0
+    allowed = set(string.ascii_letters + string.digits + " ")
+    count = sum(1 for ch in value if chr(ch) in allowed)
+    return count / len(value)
 
 
 def _bigram_score(value: str) -> float:
@@ -207,6 +225,15 @@ def detect_encoding_types(text: str) -> List[str]:
     if not value:
         return []
 
+    if value.startswith(("$2a$", "$2b$", "$2y$", "$argon2", "scrypt$")):
+        return []
+    if value.startswith("*") and len(value) == 41:
+        return []
+    if value.startswith("md5") and len(value) == 35:
+        return []
+    if value.lower().startswith("0x0100"):
+        return []
+
     strong_results: List[str] = []
     heuristic_results: List[str] = []
 
@@ -280,6 +307,7 @@ def detect_encoding_types(text: str) -> List[str]:
     hex_bytes = None
     hex_printable = 0.0
     hex_text_score = 0.0
+    has_hex_alpha = False
     if len(value) % 2 == 0 and _is_hex(value):
         try:
             decoded = decode_hex(value)
@@ -288,8 +316,13 @@ def detect_encoding_types(text: str) -> List[str]:
             hex_bytes = binascii.unhexlify(value)
             hex_printable = _printable_ratio(hex_bytes)
             hex_text_score = _bigram_score(hex_bytes.decode("utf-8", errors="ignore"))
+            has_hex_alpha = any(ch in "abcdef" for ch in value.lower())
+            hex_alnum_space = _alnum_space_ratio(hex_bytes)
         except Exception:
             pass
+
+    if _is_hex(value) and not strong_results and len(value) >= 16:
+        return []
 
     # Base64 (strict, padded)
     try:
@@ -358,7 +391,20 @@ def detect_encoding_types(text: str) -> List[str]:
         if "hex" in strong_results and hex_bytes is not None:
             raw_printable, xor_score = _try_single_byte_xor(value)
             raw_text_score = _bigram_score(hex_bytes.decode("utf-8", errors="ignore"))
-            if xor_score >= 0.05 and xor_score - raw_text_score >= 0.03:
+            decoded_text = hex_bytes.decode("utf-8", errors="ignore")
+            if hex_printable >= 0.9 and (
+                _word_hit(decoded_text)
+                or (_alpha_ratio(decoded_text) >= 0.6 and _vowel_ratio(decoded_text) >= 0.25)
+                or raw_text_score >= 0.1
+            ):
+                return ["hex"]
+            if (
+                (has_hex_alpha or hex_alnum_space < 0.85)
+                and (
+                    (raw_printable < 0.6 and xor_score - raw_text_score >= 0.05)
+                    or (raw_text_score < 0.01 and xor_score - raw_text_score >= 0.1)
+                )
+            ):
                 return ["xor"]
         return list(dict.fromkeys(strong_results))
 
@@ -411,7 +457,7 @@ def detect_encoding_types(text: str) -> List[str]:
             if score > best_rf_score:
                 best_rf_score = score
                 best_rf_text = decoded
-        if best_rf_text:
+        if best_rf_text and (_word_hit(best_rf_text) or _bigram_score(best_rf_text) >= 0.2):
             candidate_scores["railfence"] = best_rf_score
             candidate_texts["railfence"] = best_rf_text
 
@@ -419,10 +465,17 @@ def detect_encoding_types(text: str) -> List[str]:
         ic_value = _index_of_coincidence(value)
         best_text = candidate_texts.get(best_match, "")
         any_word_hit = any(_word_hit(text) for text in candidate_texts.values())
-        if (
+        score_delta = best_score - base_score
+        if best_match == "caesar" and score_delta >= 0.05 and len(value.strip()) > 12:
+            heuristic_results.append("caesar")
+        elif best_match in {"caesar", "rot13", "atbash"} and not any_word_hit and len(value.strip()) <= 12:
+            heuristic_results.append("vigenere")
+        elif best_match == "caesar" and (best_score - base_score) >= 0.12:
+            heuristic_results.append("caesar")
+        elif (
             best_match in {"caesar", "rot13", "atbash"}
             and not any_word_hit
-            and best_score < 0.3
+            and score_delta < 0.05
             and len(value.strip()) >= 8
         ):
             heuristic_results.append("vigenere")
@@ -433,7 +486,7 @@ def detect_encoding_types(text: str) -> List[str]:
             and len(value.strip()) >= 8
         ):
             heuristic_results.append("vigenere")
-        elif ic_value < 0.06 and not any_word_hit and len(value.strip()) >= 8:
+        elif ic_value < 0.06 and not any_word_hit and score_delta < 0.05 and len(value.strip()) >= 8:
             heuristic_results.append("vigenere")
         elif (
             best_match in {"caesar", "rot13", "atbash"}
@@ -449,7 +502,7 @@ def detect_encoding_types(text: str) -> List[str]:
             heuristic_results.append(best_match)
 
     # Leet (heuristic, require mixed letters+digits)
-    if any(ch.isalpha() for ch in value) and any(ch in "013457" for ch in value):
+    if not _is_hex(value) and any(ch.isalpha() for ch in value) and any(ch in "013457" for ch in value):
         decoded = decode_leet_speak(value)
         original_score = _bigram_score(value)
         decoded_score = _bigram_score(decoded)
@@ -461,7 +514,13 @@ def detect_encoding_types(text: str) -> List[str]:
         if hex_bytes is not None:
             raw_printable, xor_score = _try_single_byte_xor(value)
             raw_text_score = _bigram_score(hex_bytes.decode("utf-8", errors="ignore"))
-            if xor_score >= 0.05 and xor_score - raw_text_score >= 0.03:
+            if (
+                (has_hex_alpha or hex_alnum_space < 0.85)
+                and (
+                    (raw_printable < 0.6 and xor_score - raw_text_score >= 0.05)
+                    or (raw_text_score < 0.01 and xor_score - raw_text_score >= 0.1)
+                )
+            ):
                 heuristic_results.append("xor")
 
     return list(dict.fromkeys(heuristic_results))

@@ -391,7 +391,7 @@ def handle_identify(args: argparse.Namespace, console: Console) -> str:
     encodings = detect_encoding_types(text)
     hash_probs = detect_hash_probabilities(text, top=3)
 
-    if encodings:
+    if encodings and not (encodings == ["hex"] and hash_probs):
         return "\n".join(f"{item} encoded text" for item in encodings)
 
     if hash_probs:
