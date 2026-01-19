@@ -71,6 +71,7 @@ from .algorithms.encoding import (
 from .algorithms.hashing import hash_text
 from .utils.banner import render_banner
 from .utils.clipboard import copy_to_clipboard
+from .utils.identify import detect_encoding_types, detect_hash_probabilities
 from .utils.io import read_text_from_file, resolve_input, write_text_to_file
 from .utils.wordlist import iter_wordlist
 from .utils.hashdetect import detect_hash_types
@@ -151,6 +152,20 @@ def build_parser() -> argparse.ArgumentParser:
     crack_input_group = crack_input_parent.add_argument_group("Input Options")
     crack_input_group.add_argument("-H", "--hash", required=True, dest="target_hash")
     crack_input_group.add_argument("-w", "--wordlist", help="Wordlist path for dictionary attack")
+
+    identify_parser = subparsers.add_parser(
+        "identify",
+        help="Identify encoding and hash types",
+        parents=[input_parent, output_parent],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  hashsmith identify -i \"aGVsbG8=\"\n"
+            "  hashsmith identify -i 5f4dcc3b5aa765d61d8327deb882cf99\n"
+            "  hashsmith identify -f data.txt -o report.txt\n"
+        ),
+    )
+    subparser_map["identify"] = identify_parser
 
     encode_parser = subparsers.add_parser(
         "encode",
@@ -369,6 +384,20 @@ def handle_hash(args: argparse.Namespace, console: Console) -> str:
             raise ValueError("Base58 output is only supported for hex hashes")
         result = encode_base58_bytes(bytes.fromhex(hex_value))
     return result
+
+
+def handle_identify(args: argparse.Namespace, console: Console) -> str:
+    text = resolve_input(args.text, args.file)
+    encodings = detect_encoding_types(text)
+    hash_probs = detect_hash_probabilities(text, top=3)
+
+    if encodings:
+        return "\n".join(f"{item} encoded text" for item in encodings)
+
+    if hash_probs:
+        return "\n".join(f"{pct}% {name}" for name, pct in hash_probs)
+
+    return "Probably raw text"
 
 
 def is_hex_string(value: str) -> bool:
@@ -660,7 +689,7 @@ def interactive_mode(console: Console, accent: str) -> None:
             return out_path, copy_output
         return None, copy_output
 
-    actions = ["encode", "decode", "hash", "crack", "set-theme"]
+    actions = ["encode", "decode", "hash", "identify", "crack", "set-theme"]
     while True:
         try:
             action = choose_option("Choose action", actions, default_index=1)
@@ -751,6 +780,18 @@ def interactive_mode(console: Console, accent: str) -> None:
                 try:
                     result = handle_hash(args, console)
                     output_result(result, out_path, console, copy=copy_output)
+                    return
+                except ValueError as exc:
+                    console.print(f"[bold red]Error:[/bold red] {exc}")
+                    continue
+
+            if action == "identify":
+                text = ask_text("Enter text")
+                args = argparse.Namespace(text=text, file=None)
+                try:
+                    result = handle_identify(args, console)
+                    console.file.write(f"{result}\n")
+                    console.file.flush()
                     return
                 except ValueError as exc:
                     console.print(f"[bold red]Error:[/bold red] {exc}")
@@ -876,6 +917,15 @@ def main() -> None:
                 render_banner(console, accent)
             try:
                 result = handle_hash(args, console)
+                output_result(result, args.out, console, copy=args.copy)
+            except ValueError as exc:
+                console.print(f"[bold red]Error:[/bold red] {exc}")
+                raise SystemExit(2)
+        elif args.command == "identify":
+            if not args.no_banner:
+                render_banner(console, accent)
+            try:
+                result = handle_identify(args, console)
                 output_result(result, args.out, console, copy=args.copy)
             except ValueError as exc:
                 console.print(f"[bold red]Error:[/bold red] {exc}")
