@@ -584,6 +584,25 @@ def output_result(result: str, out: Optional[str], console: Console, copy: bool 
             console.print("[yellow]Unable to copy to clipboard[/yellow]")
 
 
+def output_identify_result(
+    result: str,
+    out: Optional[str],
+    console: Console,
+    copy: bool,
+    accent: str,
+) -> None:
+    if out:
+        write_text_to_file(out, result)
+        console.print(f"[green]Saved to {out}[/green]")
+    else:
+        console.print(Text(result, style=accent))
+    if copy:
+        if copy_to_clipboard(result):
+            console.print("[green]Copied to clipboard[/green]")
+        else:
+            console.print("[yellow]Unable to copy to clipboard[/yellow]")
+
+
 def interactive_mode(console: Console, accent: str) -> None:
     console.print(f"[bold {accent}]Interactive mode[/bold {accent}]")
 
@@ -622,8 +641,17 @@ def interactive_mode(console: Console, accent: str) -> None:
                 return f"  [{accent}]{key}[/{accent}]){spacer}{text}"
 
             console.print(format_option("0", "Back"))
-            for idx, option in enumerate(options, start=1):
-                console.print(format_option(str(idx), option))
+            key_map: dict[str, str] = {}
+            numeric_index = 1
+            for option in options:
+                if option == "identify":
+                    key_map["i"] = option
+                    console.print(format_option("i", option))
+                    continue
+                key = str(numeric_index)
+                key_map[key] = option
+                console.print(format_option(key, option))
+                numeric_index += 1
             console.print(format_option("q", "Quit"))
             default_hint = f"[{accent}]\\[{default_index}][/{accent}]"
             raw = console.input(f"Select option {default_hint}: ").strip().lower()
@@ -631,6 +659,8 @@ def interactive_mode(console: Console, accent: str) -> None:
                 raw = str(default_index)
             if raw == "0":
                 raise BackAction()
+            if raw in key_map:
+                return key_map[raw]
             maybe_exit(raw)
             try:
                 choice = int(raw)
@@ -638,8 +668,9 @@ def interactive_mode(console: Console, accent: str) -> None:
                 attempts += 1
                 console.print("[red]Invalid selection.[/red] Please try again.")
                 continue
-            if 1 <= choice <= len(options):
-                return options[choice - 1]
+            selected = key_map.get(str(choice))
+            if selected:
+                return selected
             attempts += 1
             console.print("[red]Invalid selection.[/red] Please try again.")
         console.print("[red]Too many invalid attempts. Exiting.[/red]")
@@ -689,7 +720,7 @@ def interactive_mode(console: Console, accent: str) -> None:
             return out_path, copy_output
         return None, copy_output
 
-    actions = ["encode", "decode", "hash", "identify", "crack", "set-theme"]
+    actions = ["encode", "decode", "hash", "crack", "set-theme", "identify"]
     while True:
         try:
             action = choose_option("Choose action", actions, default_index=1)
@@ -790,8 +821,7 @@ def interactive_mode(console: Console, accent: str) -> None:
                 args = argparse.Namespace(text=text, file=None)
                 try:
                     result = handle_identify(args, console)
-                    console.file.write(f"{result}\n")
-                    console.file.flush()
+                    console.print(Text(result, style=accent))
                     return
                 except ValueError as exc:
                     console.print(f"[bold red]Error:[/bold red] {exc}")
@@ -926,7 +956,7 @@ def main() -> None:
                 render_banner(console, accent)
             try:
                 result = handle_identify(args, console)
-                output_result(result, args.out, console, copy=args.copy)
+                output_identify_result(result, args.out, console, copy=args.copy, accent=accent)
             except ValueError as exc:
                 console.print(f"[bold red]Error:[/bold red] {exc}")
                 raise SystemExit(2)
