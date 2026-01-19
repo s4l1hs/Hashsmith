@@ -1,0 +1,15 @@
+{
+  "name": "hashsmith-cli",
+  "version": "1.0.0",
+  "description": "Modular toolkit for encoding, hashing, and cracking.",
+  "main": "bin/index.js",
+  "bin": {
+    "hashsmith": "bin/index.js"
+  },
+  "scripts": {
+    "postinstall": "pip install hashsmith-cli"
+  },
+  "keywords": ["security", "hashing", "encoding", "cracking", "cli"],
+  "author": "Salih Sefer",
+  "license": "MIT"
+}
