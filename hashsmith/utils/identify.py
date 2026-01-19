@@ -1,6 +1,7 @@
 import base64
 import binascii
 import re
+import string
 from typing import List, Tuple
 
 from ..algorithms.decoding import (
@@ -18,6 +19,15 @@ from ..algorithms.decoding import (
     decode_polybius,
     decode_unicode_escaped,
     decode_url,
+    decode_rot13,
+    decode_atbash,
+    decode_caesar,
+    decode_leet_speak,
+    decode_reverse,
+    decode_brainfuck,
+    decode_rail_fence,
+    decode_vigenere,
+    decode_xor,
 )
 from ..algorithms.encoding import (
     encode_base58,
@@ -34,8 +44,58 @@ from ..algorithms.encoding import (
     encode_polybius,
     encode_unicode_escaped,
     encode_url,
+    encode_caesar,
 )
 from ..algorithms.morse import REVERSE_MORSE
+
+
+COMMON_BIGRAMS = (
+    "th",
+    "he",
+    "in",
+    "er",
+    "an",
+    "re",
+    "nd",
+    "on",
+    "en",
+    "at",
+    "ou",
+    "ed",
+    "ha",
+    "to",
+    "or",
+    "it",
+    "is",
+    "hi",
+    "es",
+    "ng",
+    "st",
+    "ar",
+    "te",
+    "se",
+    "me",
+    "ve",
+    "of",
+)
+
+COMMON_WORDS = (
+    "the",
+    "and",
+    "you",
+    "that",
+    "have",
+    "for",
+    "not",
+    "with",
+    "this",
+    "but",
+    "from",
+    "secret",
+    "message",
+    "attack",
+    "dawn",
+)
 
 
 def _normalize_spaces(value: str) -> str:
@@ -46,21 +106,76 @@ def _is_hex(value: str) -> bool:
     return bool(value) and all(ch in "0123456789abcdefABCDEF" for ch in value)
 
 
+def _vowel_ratio(value: str) -> float:
+    letters = [ch.lower() for ch in value if ch.isalpha()]
+    if not letters:
+        return 0.0
+    vowels = sum(1 for ch in letters if ch in "aeiou")
+    return vowels / len(letters)
+
+
+def _printable_ratio(value: bytes) -> float:
+    if not value:
+        return 0.0
+    printable = sum(1 for ch in value if chr(ch) in string.printable)
+    return printable / len(value)
+
+
+def _bigram_score(value: str) -> float:
+    text = re.sub(r"[^a-z]", "", value.lower())
+    if len(text) < 2:
+        return 0.0
+    count = 0
+    for i in range(len(text) - 1):
+        if text[i : i + 2] in COMMON_BIGRAMS:
+            count += 1
+    return count / max(len(text) - 1, 1)
+
+
+def _word_hit(value: str) -> bool:
+    text = re.sub(r"[^a-z ]", " ", value.lower())
+    return any(word in text for word in COMMON_WORDS)
+
+
+def _best_shift_score(value: str) -> Tuple[int, float, float]:
+    original_score = _bigram_score(value)
+    best_shift = 0
+    best_score = 0.0
+    for shift in range(1, 26):
+        decoded = decode_caesar(value, shift)
+        score = _bigram_score(decoded)
+        if score > best_score:
+            best_score = score
+            best_shift = shift
+    return best_shift, original_score, best_score
+
+
+def _try_single_byte_xor(hex_text: str) -> Tuple[float, float]:
+    try:
+        raw = binascii.unhexlify(hex_text)
+    except (binascii.Error, ValueError):
+        return 0.0, 0.0
+    raw_printable = _printable_ratio(raw)
+    best_printable = 0.0
+    best_score = 0.0
+    for key in range(256):
+        decoded = bytes(b ^ key for b in raw)
+        printable_ratio = _printable_ratio(decoded)
+        if printable_ratio > best_printable:
+            best_printable = printable_ratio
+        if printable_ratio >= 0.9:
+            text = decoded.decode("utf-8", errors="ignore")
+            best_score = max(best_score, _bigram_score(text))
+    return raw_printable, best_score
+
+
 def detect_encoding_types(text: str) -> List[str]:
     value = text.strip()
     if not value:
         return []
 
-    results: List[str] = []
-
-    # Hex (strict, UTF-8 round-trip)
-    if len(value) % 2 == 0 and _is_hex(value):
-        try:
-            decoded = decode_hex(value)
-            if encode_hex(decoded).lower() == value.lower():
-                results.append("hex")
-        except Exception:
-            pass
+    strong_results: List[str] = []
+    heuristic_results: List[str] = []
 
     # Binary (8-bit groups)
     normalized = _normalize_spaces(value)
@@ -68,7 +183,7 @@ def detect_encoding_types(text: str) -> List[str]:
         try:
             decoded = decode_binary(normalized)
             if _normalize_spaces(encode_binary(decoded)) == normalized:
-                results.append("binary")
+                strong_results.append("binary")
         except Exception:
             pass
 
@@ -77,7 +192,7 @@ def detect_encoding_types(text: str) -> List[str]:
         try:
             decoded = decode_decimal(normalized)
             if _normalize_spaces(encode_decimal(decoded)) == normalized:
-                results.append("decimal")
+                strong_results.append("decimal")
         except Exception:
             pass
 
@@ -86,57 +201,25 @@ def detect_encoding_types(text: str) -> List[str]:
         try:
             decoded = decode_octal(normalized)
             if _normalize_spaces(encode_octal(decoded)) == normalized:
-                results.append("octal")
+                strong_results.append("octal")
         except Exception:
             pass
 
-    # Base64 (strict, padded)
-    try:
-        decoded = decode_base64(value)
-        if encode_base64(decoded) == value:
-            results.append("base64")
-    except Exception:
-        pass
-
-    # Base64URL (unpadded, URL-safe)
-    if "=" not in value and re.fullmatch(r"[A-Za-z0-9_-]+", value):
+    # Polybius (1-5 pairs and / for spaces)
+    if re.fullmatch(r"[1-5/ ]+", normalized):
         try:
-            decoded = decode_base64url(value)
-            if encode_base64url(decoded) == value:
-                results.append("base64url")
+            decoded = decode_polybius(normalized)
+            if _normalize_spaces(encode_polybius(decoded)) == normalized:
+                strong_results.append("polybius")
         except Exception:
             pass
 
-    # Base32 (strict, padded)
-    try:
-        decoded = decode_base32(value)
-        if encode_base32(decoded) == value.upper():
-            results.append("base32")
-    except Exception:
-        pass
-
-    # Base85 (strict round-trip)
-    try:
-        decoded = decode_base85(value)
-        if encode_base85(decoded) == value:
-            results.append("base85")
-    except Exception:
-        pass
-
-    # Base58 (strict round-trip)
-    try:
-        decoded = decode_base58(value)
-        if encode_base58(decoded) == value:
-            results.append("base58")
-    except Exception:
-        pass
-
-    # URL encoding (must include at least one valid %XX)
-    if re.search(r"%[0-9A-Fa-f]{2}", value):
+    # Baconian (A/B tokens)
+    if re.fullmatch(r"[ABab/ ]+", normalized):
         try:
-            decoded = decode_url(value)
-            if encode_url(decoded) == value:
-                results.append("url")
+            decoded = decode_baconian(normalized)
+            if _normalize_spaces(encode_baconian(decoded).upper()) == normalized.upper():
+                strong_results.append("baconian")
         except Exception:
             pass
 
@@ -147,38 +230,172 @@ def detect_encoding_types(text: str) -> List[str]:
             try:
                 decoded = decode_morse_code(normalized)
                 if _normalize_spaces(encode_morse_code(decoded)) == normalized:
-                    results.append("morse")
+                    strong_results.append("morse")
             except Exception:
                 pass
-
-    # Baconian (A/B tokens)
-    if re.fullmatch(r"[ABab/ ]+", normalized):
-        try:
-            decoded = decode_baconian(normalized)
-            if _normalize_spaces(encode_baconian(decoded).upper()) == normalized.upper():
-                results.append("baconian")
-        except Exception:
-            pass
-
-    # Polybius (1-5 pairs and / for spaces)
-    if re.fullmatch(r"[1-5/ ]+", normalized):
-        try:
-            decoded = decode_polybius(normalized)
-            if _normalize_spaces(encode_polybius(decoded)) == normalized:
-                results.append("polybius")
-        except Exception:
-            pass
 
     # Unicode escaped (\uXXXX)
     if re.fullmatch(r"(?:\\u[0-9a-fA-F]{4})+", value):
         try:
             decoded = decode_unicode_escaped(value)
             if encode_unicode_escaped(decoded) == value.lower():
-                results.append("unicode")
+                strong_results.append("unicode")
         except Exception:
             pass
 
-    return results
+    # Hex (strict, UTF-8 round-trip)
+    hex_bytes = None
+    hex_printable = 0.0
+    hex_text_score = 0.0
+    if len(value) % 2 == 0 and _is_hex(value):
+        try:
+            decoded = decode_hex(value)
+            if encode_hex(decoded).lower() == value.lower():
+                strong_results.append("hex")
+            hex_bytes = binascii.unhexlify(value)
+            hex_printable = _printable_ratio(hex_bytes)
+            hex_text_score = _bigram_score(hex_bytes.decode("utf-8", errors="ignore"))
+        except Exception:
+            pass
+
+    # Base64 (strict, padded)
+    try:
+        decoded = decode_base64(value)
+        if encode_base64(decoded) == value:
+            strong_results.append("base64")
+    except Exception:
+        pass
+
+    # Base64URL (unpadded, URL-safe)
+    if "=" not in value and re.fullmatch(r"[A-Za-z0-9_-]+", value):
+        try:
+            decoded = decode_base64url(value)
+            if encode_base64url(decoded) == value:
+                strong_results.append("base64url")
+        except Exception:
+            pass
+
+    # Base32 (strict, padded)
+    try:
+        decoded = decode_base32(value)
+        if encode_base32(decoded) == value.upper():
+            strong_results.append("base32")
+    except Exception:
+        pass
+
+    # Base85 (strict round-trip)
+    try:
+        decoded = decode_base85(value)
+        if encode_base85(decoded) == value:
+            strong_results.append("base85")
+    except Exception:
+        pass
+
+    # Base58 (strict round-trip)
+    try:
+        decoded = decode_base58(value)
+        if encode_base58(decoded) == value:
+            strong_results.append("base58")
+    except Exception:
+        pass
+
+    # URL encoding (must include at least one valid %XX)
+    if re.search(r"%[0-9A-Fa-f]{2}", value):
+        try:
+            decoded = decode_url(value)
+            if encode_url(decoded) == value:
+                strong_results.append("url")
+        except Exception:
+            pass
+    # Brainfuck
+    if re.fullmatch(r"[+\-<>\[\].,]+", value):
+        try:
+            decoded = decode_brainfuck(value)
+            if decoded:
+                strong_results.append("brainf*ck")
+        except Exception:
+            pass
+
+    # Prefer polybius when present to avoid overlap with decimal/octal
+    if "polybius" in strong_results:
+        return ["polybius"]
+
+    # If any strong format matched, return only those
+    if strong_results:
+        if "hex" in strong_results and hex_bytes is not None:
+            raw_printable, xor_score = _try_single_byte_xor(value)
+            raw_text_score = _bigram_score(hex_bytes.decode("utf-8", errors="ignore"))
+            if xor_score >= 0.05 and xor_score - raw_text_score >= 0.03:
+                return ["xor"]
+        return list(dict.fromkeys(strong_results))
+
+    # ROT13 / Caesar / Atbash / Reverse / Rail fence heuristics
+    if re.fullmatch(r"[A-Za-z ]+", value) and len(value.strip()) >= 6:
+        original_ratio = _vowel_ratio(value)
+        original_score = _bigram_score(value)
+
+        rot13_decoded = decode_rot13(value)
+        rot13_ratio = _vowel_ratio(rot13_decoded)
+        rot13_score = _bigram_score(rot13_decoded)
+        if (rot13_ratio >= 0.3 and rot13_ratio - original_ratio >= 0.15) and _word_hit(rot13_decoded):
+            heuristic_results.append("rot13")
+
+        shift, original_score, best_score = _best_shift_score(value)
+        caesar_decoded = decode_caesar(value, shift) if shift else value
+        caesar_ratio = _vowel_ratio(caesar_decoded)
+        if shift not in {0, 13} and (
+            (caesar_ratio >= 0.3 and caesar_ratio - original_ratio >= 0.15)
+            and _word_hit(caesar_decoded)
+        ):
+            heuristic_results.append("caesar")
+
+        atbash_decoded = decode_atbash(value)
+        atbash_ratio = _vowel_ratio(atbash_decoded)
+        atbash_score = _bigram_score(atbash_decoded)
+        if (atbash_ratio >= 0.3 and atbash_ratio - original_ratio >= 0.15) and _word_hit(atbash_decoded):
+            heuristic_results.append("atbash")
+
+        reverse_decoded = decode_reverse(value)
+        reverse_score = _bigram_score(reverse_decoded)
+        if reverse_score >= max(0.05, original_score + 0.02) and _word_hit(reverse_decoded):
+            heuristic_results.append("reverse")
+
+        best_rf_score = 0.0
+        best_rf_text = ""
+        for rails in range(2, 6):
+            try:
+                decoded = decode_rail_fence(value, rails)
+            except Exception:
+                continue
+            score = _bigram_score(decoded)
+            if score > best_rf_score:
+                best_rf_score = score
+                best_rf_text = decoded
+        if best_rf_score >= max(0.05, original_score + 0.02):
+            heuristic_results.append("railfence")
+
+    # Leet (heuristic, require mixed letters+digits)
+    if any(ch.isalpha() for ch in value) and any(ch in "013457" for ch in value):
+        decoded = decode_leet_speak(value)
+        original_score = _bigram_score(value)
+        decoded_score = _bigram_score(decoded)
+        if decoded_score >= max(0.05, original_score + 0.02):
+            heuristic_results.append("leet")
+
+    # XOR (single-byte key heuristic on hex)
+    if len(value) % 2 == 0 and _is_hex(value):
+        if hex_bytes is not None:
+            raw_printable, xor_score = _try_single_byte_xor(value)
+            raw_text_score = _bigram_score(hex_bytes.decode("utf-8", errors="ignore"))
+            if xor_score >= 0.05 and xor_score - raw_text_score >= 0.03:
+                heuristic_results.append("xor")
+
+    # Vigenere (heuristic: alphabetic, low bigram score, not caught by others)
+    if re.fullmatch(r"[A-Za-z ]+", value) and len(value.strip()) >= 8:
+        if _bigram_score(value) <= 0.02 and _vowel_ratio(value) <= 0.25 and not heuristic_results:
+            heuristic_results.append("vigenere")
+
+    return list(dict.fromkeys(heuristic_results))
 
 
 def _weights_for_hex_length(length: int) -> List[Tuple[str, float]]:
