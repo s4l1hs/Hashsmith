@@ -91,6 +91,7 @@ COMMON_WORDS = (
     "this",
     "but",
     "from",
+    "hello",
     "secret",
     "message",
     "attack",
@@ -407,6 +408,12 @@ def detect_encoding_types(text: str) -> List[str]:
             ):
                 return ["xor"]
         return list(dict.fromkeys(strong_results))
+
+    # ROT13 short-word check (avoid false positives by requiring word hit)
+    if re.fullmatch(r"[A-Za-z ]+", value) and 4 <= len(value.strip()) < 6:
+        rot13_decoded = decode_rot13(value)
+        if _word_hit(rot13_decoded) and not _word_hit(value):
+            return ["rot13"]
 
     # ROT13 / Caesar / Atbash / Reverse / Rail fence heuristics
     if re.fullmatch(r"[A-Za-z ]+", value) and len(value.strip()) >= 6:

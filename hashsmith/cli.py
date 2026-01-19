@@ -93,11 +93,26 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="hashsmith",
         description="Hashsmith CLI for encoding, decoding, hashing, and cracking.",
+        epilog=(
+            "Examples:\n"
+            "  hashsmith encode -t base64 -i \"hello\"\n"
+            "  hashsmith identify -i \"aGVsbG8=\"\n"
+            "  hashsmith -id -i \"aGVsbG8=\"\n"
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("-N", "--no-banner", action="store_true", help="Disable banner")
     parser.add_argument("-T", "--theme", choices=list(THEMES.keys()), default="cyan", help="Accent color")
     parser.add_argument("-A", "--help-all", action="store_true", help="Show help for all commands")
+    parser.add_argument("-id", "--identify", action="store_true", help="Shortcut for identify command")
+
+    main_input_group = parser.add_argument_group("Input Options")
+    main_input_group.add_argument("-i", "--text", help="Text input")
+    main_input_group.add_argument("-f", "--file", help="Read input from file")
+
+    main_output_group = parser.add_argument_group("Output Options")
+    main_output_group.add_argument("-o", "--out", help="Write output to file")
+    main_output_group.add_argument("-c", "--copy", action="store_true", help="Copy output to clipboard")
 
     subparsers = parser.add_subparsers(dest="command")
     subparser_map: dict[str, argparse.ArgumentParser] = {}
@@ -916,7 +931,19 @@ def main() -> None:
         raise SystemExit(0)
 
     try:
-        if args.command is None:
+        if args.identify:
+            if args.command and args.command != "identify":
+                console.print("[bold red]Error:[/bold red] -id cannot be combined with another command.")
+                raise SystemExit(2)
+            if not args.no_banner:
+                render_banner(console, accent)
+            try:
+                result = handle_identify(args, console)
+                output_identify_result(result, args.out, console, copy=args.copy, accent=accent)
+            except ValueError as exc:
+                console.print(f"[bold red]Error:[/bold red] {exc}")
+                raise SystemExit(2)
+        elif args.command is None:
             if not args.no_banner:
                 render_banner(console, accent)
             interactive_mode(console, accent)
