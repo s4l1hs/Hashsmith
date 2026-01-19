@@ -92,72 +92,159 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="hashsmith",
         description="Hashsmith CLI for encoding, decoding, hashing, and cracking.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--no-banner", action="store_true", help="Disable banner")
-    parser.add_argument("--theme", choices=list(THEMES.keys()), default="cyan", help="Accent color")
+    parser.add_argument("-N", "--no-banner", action="store_true", help="Disable banner")
+    parser.add_argument("-T", "--theme", choices=list(THEMES.keys()), default="cyan", help="Accent color")
+    parser.add_argument("-A", "--help-all", action="store_true", help="Show help for all commands")
 
     subparsers = parser.add_subparsers(dest="command")
+    subparser_map: dict[str, argparse.ArgumentParser] = {}
 
-    encode_parser = subparsers.add_parser("encode", help="Encode text")
-    encode_parser.add_argument("--type", required=True, choices=[
-        "base64", "base64url", "base32", "base85", "base58", "hex", "binary", "decimal", "octal",
-        "morse", "url", "caesar", "rot13", "vigenere", "xor", "atbash",
-           "baconian", "leet", "reverse", "brainf*ck", "railfence", "polybius", "unicode"
-    ])
-    encode_parser.add_argument("--text", help="Text input")
-    encode_parser.add_argument("--file", help="Read input from file")
-    encode_parser.add_argument("--shift", type=int, default=3, help="Shift for Caesar")
-    encode_parser.add_argument("--key", help="Key for Vigenere/XOR")
-    encode_parser.add_argument("--rails", type=int, default=2, help="Rails for Rail Fence")
-    encode_parser.add_argument("--out", help="Write output to file")
-    encode_parser.add_argument("--copy", action="store_true", help="Copy output to clipboard")
+    input_parent = argparse.ArgumentParser(add_help=False)
+    input_group = input_parent.add_argument_group("Input Options")
+    input_group.add_argument("-i", "--text", help="Text input")
+    input_group.add_argument("-f", "--file", help="Read input from file")
 
-    decode_parser = subparsers.add_parser("decode", help="Decode text")
-    decode_parser.add_argument("--type", required=True, choices=[
-        "base64", "base64url", "base32", "base85", "base58", "hex", "binary", "decimal", "octal",
-        "morse", "url", "caesar", "rot13", "vigenere", "xor", "atbash",
-           "baconian", "leet", "reverse", "brainf*ck", "railfence", "polybius", "unicode"
-    ])
-    decode_parser.add_argument("--text", help="Text input")
-    decode_parser.add_argument("--file", help="Read input from file")
-    decode_parser.add_argument("--shift", type=int, default=3, help="Shift for Caesar")
-    decode_parser.add_argument("--key", help="Key for Vigenere/XOR")
-    decode_parser.add_argument("--rails", type=int, default=2, help="Rails for Rail Fence")
-    decode_parser.add_argument("--out", help="Write output to file")
-    decode_parser.add_argument("--copy", action="store_true", help="Copy output to clipboard")
+    output_parent = argparse.ArgumentParser(add_help=False)
+    output_group = output_parent.add_argument_group("Output Options")
+    output_group.add_argument("-o", "--out", help="Write output to file")
+    output_group.add_argument("-c", "--copy", action="store_true", help="Copy output to clipboard")
 
-    hash_parser = subparsers.add_parser("hash", help="Hash text")
-    hash_parser.add_argument("--type", required=True, choices=[
+    encode_decode_parent = argparse.ArgumentParser(add_help=False)
+    encode_decode_group = encode_decode_parent.add_argument_group("Algorithm Parameters")
+    encode_decode_group.add_argument(
+        "-t",
+        "--type",
+        required=True,
+        choices=[
+            "base64",
+            "base64url",
+            "base32",
+            "base85",
+            "base58",
+            "hex",
+            "binary",
+            "decimal",
+            "octal",
+            "morse",
+            "url",
+            "caesar",
+            "rot13",
+            "vigenere",
+            "xor",
+            "atbash",
+            "baconian",
+            "leet",
+            "reverse",
+            "brainf*ck",
+            "railfence",
+            "polybius",
+            "unicode",
+        ],
+    )
+    encode_decode_group.add_argument("-s", "--shift", type=int, default=3, help="Shift for Caesar")
+    encode_decode_group.add_argument("-k", "--key", help="Key for Vigenere/XOR")
+    encode_decode_group.add_argument("-r", "--rails", type=int, default=2, help="Rails for Rail Fence")
+
+    crack_input_parent = argparse.ArgumentParser(add_help=False)
+    crack_input_group = crack_input_parent.add_argument_group("Input Options")
+    crack_input_group.add_argument("-H", "--hash", required=True, dest="target_hash")
+    crack_input_group.add_argument("-w", "--wordlist", help="Wordlist path for dictionary attack")
+
+    encode_parser = subparsers.add_parser(
+        "encode",
+        help="Encode text",
+        parents=[input_parent, output_parent, encode_decode_parent],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  hashsmith encode -t base64 -i \"hello\"\n"
+            "  hashsmith encode -t caesar -s 5 -f input.txt -o output.txt\n"
+            "  hashsmith encode -t hex -i \"hello\" -c\n"
+        ),
+    )
+    subparser_map["encode"] = encode_parser
+
+    decode_parser = subparsers.add_parser(
+        "decode",
+        help="Decode text",
+        parents=[input_parent, output_parent, encode_decode_parent],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  hashsmith decode -t base64 -i \"aGVsbG8=\"\n"
+            "  hashsmith decode -t base64 -f data.txt -o result.txt\n"
+            "  hashsmith decode -t hex -i \"68656c6c6f\" -c\n"
+        ),
+    )
+    subparser_map["decode"] = decode_parser
+
+    hash_parser = subparsers.add_parser(
+        "hash",
+        help="Hash text",
+        parents=[input_parent, output_parent],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  hashsmith hash -t sha256 -i \"admin\" -c\n"
+            "  hashsmith hash -t md5 -i \"secret\" -s pepper -S suffix\n"
+            "  hashsmith hash -t sha1 -f input.txt -o hashes.txt\n"
+        ),
+    )
+    subparser_map["hash"] = hash_parser
+    hash_params = hash_parser.add_argument_group("Algorithm Parameters")
+    hash_output_format = hash_parser.add_argument_group("Output Format")
+
+    hash_params.add_argument("-t", "--type", required=True, choices=[
         "md5", "md4", "sha1", "sha224", "sha256", "sha384", "sha512", "sha3_224", "sha3_256", "sha3_512",
         "blake2b", "blake2s", "ntlm", "mysql323", "mysql41", "bcrypt",
         "argon2", "scrypt", "mssql2000", "mssql2005", "mssql2012", "postgres"
     ])
-    hash_parser.add_argument("--text", help="Text input")
-    hash_parser.add_argument("--file", help="Read input from file")
-    hash_parser.add_argument("--salt", default="", help="Salt value")
-    hash_parser.add_argument("--salt-mode", default="prefix", choices=["prefix", "suffix"])
-    hash_parser.add_argument("--out-encoding", default="hex", choices=["hex", "base58"], help="Output encoding for hex hashes")
-    hash_parser.add_argument("--out", help="Write output to file")
-    hash_parser.add_argument("--copy", action="store_true", help="Copy output to clipboard")
+    hash_params.add_argument("-s", "--salt", default="", help="Salt value")
+    hash_params.add_argument("-S", "--salt-mode", default="prefix", choices=["prefix", "suffix"])
+    hash_output_format.add_argument("-e", "--out-encoding", default="hex", choices=["hex", "base58"], help="Output encoding for hex hashes")
 
-    crack_parser = subparsers.add_parser("crack", help="Crack hash")
-    crack_parser.add_argument("--type", required=True, choices=[
+    crack_parser = subparsers.add_parser(
+        "crack",
+        help="Crack hash",
+        parents=[crack_input_parent, output_parent],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  hashsmith crack -t md5 -H 5f4dcc3b5aa765d61d8327deb882cf99 -M dict -w wordlists/common.txt\n"
+            "  hashsmith crack -t sha1 -H 2aae6c35c94fcfb415dbe95f408b9ce91ee846ed -M brute -n 1 -x 4\n"
+            "  hashsmith crack -t md5 -H 5f4dcc3b5aa765d61d8327deb882cf99 -M dict -w wordlists/common.txt -c\n"
+        ),
+    )
+    subparser_map["crack"] = crack_parser
+    crack_params = crack_parser.add_argument_group("Algorithm Parameters")
+
+    crack_params.add_argument("-t", "--type", required=True, choices=[
         "auto", "md5", "md4", "sha1", "sha224", "sha256", "sha384", "sha512", "sha3_224", "sha3_256", "sha3_512",
         "blake2b", "blake2s", "ntlm", "mysql323", "mysql41", "bcrypt",
         "argon2", "scrypt", "mssql2000", "mssql2005", "mssql2012", "postgres"
     ])
-    crack_parser.add_argument("--hash", required=True, dest="target_hash")
-    crack_parser.add_argument("--mode", required=True, choices=["dict", "brute"])
-    crack_parser.add_argument("--wordlist", help="Wordlist path for dictionary attack")
-    crack_parser.add_argument("--charset", default="abcdefghijklmnopqrstuvwxyz0123456789")
-    crack_parser.add_argument("--min-len", type=int, default=1)
-    crack_parser.add_argument("--max-len", type=int, default=4)
-    crack_parser.add_argument("--salt", default="")
-    crack_parser.add_argument("--salt-mode", default="prefix", choices=["prefix", "suffix"])
-    crack_parser.add_argument("--workers", type=int, default=0, help="Parallel workers for dictionary attack (0=auto)")
-    crack_parser.add_argument("--copy", action="store_true", help="Copy to clipboard")
+    crack_params.add_argument("-M", "--mode", required=True, choices=["dict", "brute"])
+    crack_params.add_argument("-C", "--charset", default="abcdefghijklmnopqrstuvwxyz0123456789")
+    crack_params.add_argument("-n", "--min-len", type=int, default=1)
+    crack_params.add_argument("-x", "--max-len", type=int, default=4)
+    crack_params.add_argument("-s", "--salt", default="")
+    crack_params.add_argument("-S", "--salt-mode", default="prefix", choices=["prefix", "suffix"])
+    crack_params.add_argument("-p", "--workers", type=int, default=0, help="Parallel workers for dictionary attack (0=auto)")
 
-    subparsers.add_parser("interactive", help="Guided interactive mode")
+    interactive_parser = subparsers.add_parser(
+        "interactive",
+        help="Guided interactive mode",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  hashsmith interactive\n"
+        ),
+    )
+    subparser_map["interactive"] = interactive_parser
+
+    parser.set_defaults(_subparser_map=subparser_map)
 
     return parser
 
@@ -439,6 +526,9 @@ def handle_crack(args: argparse.Namespace, console: Console, accent: str = "cyan
                 console.print("[green]Copied to clipboard[/green]")
             else:
                 console.print("[yellow]Unable to copy to clipboard[/yellow]")
+        if getattr(args, "out", None):
+            write_text_to_file(args.out, result.password or "")
+            console.print(f"[green]Saved to {args.out}[/green]")
     else:
         console.print("[yellow]Not found[/yellow]")
 
@@ -745,6 +835,14 @@ def main() -> None:
     console = Console()
 
     accent = THEMES.get(args.theme, "cyan")
+
+    if getattr(args, "help_all", False):
+        parser.print_help()
+        subparser_map = getattr(args, "_subparser_map", {})
+        for name, subparser in subparser_map.items():
+            print(f"\n{name} command help:\n")
+            subparser.print_help()
+        raise SystemExit(0)
 
     try:
         if args.command is None:
