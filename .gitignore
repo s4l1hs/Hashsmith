@@ -17,3 +17,6 @@ hashsmith/hashsmith
 graphify-out/
 .superpowers/
 
+
+# git worktrees created for isolated task execution
+.claude/worktrees/
