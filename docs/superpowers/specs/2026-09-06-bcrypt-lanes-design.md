@@ -47,8 +47,26 @@ different 256-entry tables from the same input word, and only their combination
 `((S0[a] + S1[b]) ^ S2[c]) + S3[d]` is serial. So the round's *latency* floor is
 roughly L1 load latency plus three arithmetic ops, ~8-9 cycles, and its
 *throughput* floor, given three load units against four loads, is ~1.3
-cycles/round/lane. 21.2 is far above both: the current code is bound by neither,
-it is bound by Go's bounds checks and register spills.
+cycles/round/lane. 21.2 is far above both.
+
+**What the excess is not.** Measured 2026-09-06 with
+`go build -gcflags=-d=ssa/check_bce/debug=1` over `x/crypto/blowfish@v0.31.0`:
+`encryptBlock` (block.go:115-137) emits **zero** bounds checks. Go already
+proves a `byte` index fits a `[256]uint32`. The package's 45 checks are all in
+scaffolding the bcrypt inner loop never executes -- `getNextWord`, the key and
+salt loops (block.go:13, 34, 74-109), and `cipher.go`'s byte-slice
+`Encrypt`/`Decrypt`. So bounds-check elimination is not the win, and an
+implementer must not spend time hunting for it.
+
+**What it probably is**, stated as a hypothesis to be measured rather than
+assumed: `ExpandKey` writes into `s0`..`s3` between encryptions, so every
+`encryptBlock` load has to be disambiguated against very recent stores to the
+same tables. Store-to-load forwarding pressure of this kind stalls a single
+dependency chain and is precisely what independent lanes hide. Task 1 of the
+implementation plan establishes the real bottleneck before any core is written;
+nothing downstream depends on this hypothesis being right, because the remedy
+-- more independent chains in flight -- is the same for any of the plausible
+causes.
 
 The target needs 7.25 cycles/round. That is above the latency floor for a single
 lane, so it cannot be reached by one chain no matter how tight — and comfortably
@@ -122,11 +140,12 @@ to be written out literally for the chains to stay independent — which is what
 makes a generator worth having rather than hand-maintaining four copies of a
 16-round Feistel network.
 
-**Bounds-check elimination is a first-class requirement, not a micro-optimization.**
-S-boxes are declared `[256]uint32` and indexed by a value the compiler can prove
-is a `byte`, so no bounds check is emitted. `go build -gcflags=-d=ssa/check_bce/debug=1`
-over the package must report no checks in the round function; a test asserts this
-so it cannot silently regress.
+**Bounds-check freedom is a regression guard, not a goal.** The vendored code
+already emits no bounds checks in the round function (see §2), and the
+interleaved rewrite must not introduce any -- lane state held in slices rather
+than fixed-size arrays would. A test asserts this via
+`go build -gcflags=-d=ssa/check_bce/debug=1`, so a later edit cannot silently
+regress it.
 
 ### 4.2 API
 
@@ -202,8 +221,9 @@ definition.
    rule label.
 6. **Existing vectors.** The `selftest` bcrypt vectors pass unchanged through
    the new path, and `-slow` stays green.
-7. **No bounds checks.** Asserted via `-d=ssa/check_bce/debug=1` over the round
-   function.
+7. **No bounds checks introduced.** Asserted via
+   `-d=ssa/check_bce/debug=1` over the round function, guarding the property
+   the vendored code already has rather than establishing a new one.
 
 ## 7. Tuning and the performance gate
 
